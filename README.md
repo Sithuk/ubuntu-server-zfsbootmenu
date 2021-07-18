@@ -1,6 +1,6 @@
 # Ubuntu server zfsbootmenu install script
 
-tldr; Ubuntu server installation script: native encrypted zfs on root, zfsbootmenu, pyzsnap snapshot management. Optional remote ssh access during boot to unlock the ZFS drive or to rollback system to a previous state.
+tldr; Ubuntu server installation script: native encrypted zfs on root, zfsbootmenu, pyznap snapshot management. Optional remote ssh access during boot to unlock the ZFS drive or to rollback system to a previous state.
 
 The script should be run from an Ubuntu live desktop iso (zfs 2.0 support needed for native encryption, so minimum Ubuntu 21.04 should be used).
 
