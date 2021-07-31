@@ -13,12 +13,15 @@ Boot the system with an Ubuntu live desktop iso (ZFS 2.0 support needed for nati
     chmod +x ubuntu_server_encrypted_root_zfs.sh
 	
 Edit the variables in the ubuntu_server_encrypted_root_zfs.sh file to your preferences.
+
 	nano ubuntu_server_encrypted_root_zfs.sh
 	
 Run the first part of the script.
+
 	./ubuntu_server_encrypted_root_zfs.sh initial
 	
 Reboot after the initial installation completes and login to the new install. Username is root, password is as set in the script variables. Then run the second part of the script.
+
 	./ubuntu_server_encrypted_root_zfs.sh postreboot
 
 Additional guidance and notes can be found in the script.
