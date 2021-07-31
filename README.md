@@ -20,7 +20,7 @@ Run the first part of the script.
 Reboot after the initial installation completes and login to the new install. Username is root, password is as set in the script variables. Then run the second part of the script.
 	./ubuntu_server_encrypted_root_zfs.sh postreboot
 
-	Additional guidance and notes can be found in the script.
+Additional guidance and notes can be found in the script.
 
 ## Reddit discussion thread:
 	https://www.reddit.com/r/zfs/comments/mj4nfa/ubuntu_server_2104_native_encrypted_root_on_zfs/
