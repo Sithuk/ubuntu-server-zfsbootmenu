@@ -1,32 +1,31 @@
-# Ubuntu server zfsbootmenu install script
+#Ubuntu server zfsbootmenu install script
 
-tldr; Ubuntu server installation script: native encrypted zfs on root, zfsbootmenu, pyznap snapshot management. Optional remote ssh access during boot to unlock the ZFS drive or to rollback system to a previous state.
+	This script creates an ubuntu server installation using the ZFS filesystem. The installation has integrated snapshot management. Snapshots can be rolled back remotely at boot over ssh. This is useful where there is no physical access to the machine.
 
-The script should be run from an Ubuntu live desktop iso (zfs 2.0 support needed for native encryption, so minimum Ubuntu 21.04 should be used).
+	Snapshots allow you to rollback your system to a previous state if there is a problem. The system automatically creates snapshots on a timer and also when the system is updated with apt.
 
-Reddit discussion thread:
 
-https://www.reddit.com/r/zfs/comments/mj4nfa/ubuntu_server_2104_native_encrypted_root_on_zfs/
+## Usage
+	Boot the system with an Ubuntu live desktop iso (ZFS 2.0 support needed for native encryption, so use Ubuntu 21.04 or later). Start the terminal (Ctrl+Alt+T) and enter the following.
+	git clone git@gitlab.com:Sithuk/ubuntu-server-zfsbootmenu.git ~/ubuntu-server-zfsbootmenu
+    cd ~/ubuntu-server-zfsbootmenu
+    chmod +x ubuntu_server_encrypted_root_zfs.sh
+	
+	Edit the variables in the ubuntu_server_encrypted_root_zfs.sh file to your preferences.
+	nano ubuntu_server_encrypted_root_zfs.sh
+	
+	Run the first part of the script.
+	./ubuntu_server_encrypted_root_zfs.sh initial
+	
+	Reboot after the initial installation completes and login to the new install. Username is root, password is as set in the script variables. Then run the second part of the script.
+	./ubuntu_server_encrypted_root_zfs.sh postreboot
 
---
+	Additional guidance and notes can be found in the script.
 
-I've created a bash script to install ubuntu server using the zfsbootmenu (ZBM) bootloader. ZBM is a zfs boot environment manager that allows rollbacks in case of a bad upgrade. Unlike zsys, it allows for remote login at boot to select which snapshot to boot from. So it is more useful than zsys for headless servers.
-Ubuntu uses grub as default. The Ubuntu server root on zfs guide uses a separate boot pool with a restricted feature set because grub lacks full zfs support. ZBM doesn't have this issue, so there is no need for a separate boot pool and the added complexity that can cause for snapshot management.
+## Reddit discussion thread:
+	https://www.reddit.com/r/zfs/comments/mj4nfa/ubuntu_server_2104_native_encrypted_root_on_zfs/
 
-I've used pyznap as the snapshot manager. Pyznap author comments on pyznap vs sanoid here:
-
-https://github.com/yboetz/pyznap/issues/1#issuecomment-351015432
-
-The snapshot workflow is:
-1. "sudo pyznap snap" to take snapshots as per settings in a config file.
-2. At reboot the user can press tab to load the ZBM menu to select a historic snapshot to boot from. Otherwise the default boot sequence happens.
-
-Snapshots are also taken automatically on a time based schedule and when installing upgrades with apt.
-
-Special thank you to the following.
-
-rlaager (https://openzfs.github.io/openzfs-docs/Getting%20Started/Ubuntu/Ubuntu%2020.04%20Root%20on%20ZFS.html)
-
-ahesford E39M5S62/zdykstra (https://github.com/zbm-dev/zfsbootmenu)
-
-cythoning (https://github.com/yboetz/pyznap)
+## Credits
+	rlaager (https://openzfs.github.io/openzfs-docs/Getting%20Started/Ubuntu/Ubuntu%2020.04%20Root%20on%20ZFS.html)
+	ahesford E39M5S62/zdykstra (https://github.com/zbm-dev/zfsbootmenu)
+	cythoning (https://github.com/yboetz/pyznap)
