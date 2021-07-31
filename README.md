@@ -27,7 +27,7 @@ Reboot after the initial installation completes and login to the new install. Us
 Additional guidance and notes can be found in the script.
 
 ## Reddit discussion thread:
-	https://www.reddit.com/r/zfs/comments/mj4nfa/ubuntu_server_2104_native_encrypted_root_on_zfs/
+https://www.reddit.com/r/zfs/comments/mj4nfa/ubuntu_server_2104_native_encrypted_root_on_zfs/
 
 ## Credits
 	rlaager (https://openzfs.github.io/openzfs-docs/Getting%20Started/Ubuntu/Ubuntu%2020.04%20Root%20on%20ZFS.html)
