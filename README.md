@@ -8,8 +8,6 @@ Snapshots allow you to rollback your system to a previous state if there is a pr
 ## Usage
 Boot the system with an Ubuntu live desktop iso (ZFS 2.0 support needed for native encryption, so use Ubuntu 21.04 or later). Start the terminal (Ctrl+Alt+T) and enter the following.
 
-`git clone git@gitlab.com:Sithuk/ubuntu-server-zfsbootmenu.git ~/ubuntu-server-zfsbootmenu`
-
 	git clone git@gitlab.com:Sithuk/ubuntu-server-zfsbootmenu.git ~/ubuntu-server-zfsbootmenu
     cd ~/ubuntu-server-zfsbootmenu
     chmod +x ubuntu_server_encrypted_root_zfs.sh
