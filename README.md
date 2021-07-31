@@ -26,7 +26,7 @@ Reboot after the initial installation completes and login to the new install. Us
 
 Additional guidance and notes can be found in the script.
 
-## Reddit discussion thread:
+## Reddit discussion thread
 https://www.reddit.com/r/zfs/comments/mj4nfa/ubuntu_server_2104_native_encrypted_root_on_zfs/
 
 ## Credits
