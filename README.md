@@ -1,4 +1,4 @@
-#Ubuntu server zfsbootmenu install script
+# Ubuntu server zfsbootmenu install script
 
 	This script creates an ubuntu server installation using the ZFS filesystem. The installation has integrated snapshot management. Snapshots can be rolled back remotely at boot over ssh. This is useful where there is no physical access to the machine.
 
