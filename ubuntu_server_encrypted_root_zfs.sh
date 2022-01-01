@@ -1,5 +1,5 @@
 #!/bin/bash
-##Script date: 2021-07-17
+##Script date: 2021-01-01
 
 set -euo pipefail
 set -x
@@ -61,11 +61,11 @@ remoteaccess="no" #"yes" to enable remoteaccess during first boot. Recommend lea
 timeout_rEFInd="5" #Timeout in seconds for rEFInd boot screen until default choice selected.
 timeout_zbm_no_remote_access="15" #Timeout in seconds for zfsbootmenu when no remote access enabled.
 timeout_zbm_remote_access="30" #Timeout in seconds for zfsbootmenu when remote access enabled.
-quiet_boot="yes" #Set to no to show boot sequence.
+quiet_boot="yes" #Set to "no" to show boot sequence.
 ethprefix="e" #First letter of ethernet interface. Used to identify ethernet interface to setup networking in new install.
 install_log="ubuntu_setup_zfs_root.log" #Installation log filename.
 log_loc="/var/log" #Installation log location.
-ipv6_apt_fix_live_iso="no" #Try setting to "yes if apt-get is slow in the ubuntu live iso. Doesn't affect ipv6 functionality in the new install.
+ipv6_apt_fix_live_iso="no" #Try setting to "yes" if apt-get is slow in the ubuntu live iso. Doesn't affect ipv6 functionality in the new install.
 
 ##Check for root priviliges
 if [ "$(id -u)" -ne 0 ]; then
@@ -330,26 +330,16 @@ remote_zbm_access_Func(){
 		mkdir -p /etc/cmdline.d
 		echo "ip=dhcp rd.neednet=1" > /etc/cmdline.d/dracut-network.conf ##Replace "dhcp" with specific IP if needed.
 		
-		##Create zfsbootmenu starter script.
-		cat <<-EOF >/etc/zfsbootmenu/dracut.conf.d/zbm
-			#!/bin/sh
-			rm /zfsbootmenu/active
-			zfsbootmenu
-		EOF
-		chmod 755 /etc/zfsbootmenu/dracut.conf.d/zbm
-		
 		##add remote session welcome message
 		cat <<-EOF >/etc/zfsbootmenu/dracut.conf.d/banner.txt
 			Welcome to the ZFSBootMenu initramfs shell. Enter "zbm" to start ZFSBootMenu.
 		EOF
 		chmod 755 /etc/zfsbootmenu/dracut.conf.d/banner.txt
+		
 		sed -i 's,  /sbin/dropbear -s -j -k -p \${dropbear_port} -P /tmp/dropbear.pid,  /sbin/dropbear -s -j -k -p \${dropbear_port} -P /tmp/dropbear.pid -b /etc/banner.txt,' /usr/lib/dracut/modules.d/60crypt-ssh/dropbear-start.sh
 		
 		##Copy files into initramfs
 		sed -i '$ s,^},,' "$modulesetup"
-		echo "  ##Copy ZFSBootMenu start helper script" | tee -a "$modulesetup"
-		echo "  inst /etc/zfsbootmenu/dracut.conf.d/zbm /usr/bin/zbm" | tee -a "$modulesetup"
-		echo "" | tee -a "$modulesetup"
 		echo "  ##Copy dropbear welcome message" | tee -a "$modulesetup"
 		echo "  inst /etc/zfsbootmenu/dracut.conf.d/banner.txt /etc/banner.txt" | tee -a "$modulesetup"
 		echo "}" | tee -a "$modulesetup"
@@ -374,9 +364,6 @@ remote_zbm_access_Func(){
 			##Note that login to dropbear is "root" regardless of which authorized_keys is used.
 			#dropbear_acl=/home/${user}/.ssh/authorized_keys
 		EOF
-		
-		##Reduce timer on initial rEFInd screen
-		sed -i 's,timeout 20,timeout $timeout_rEFInd,' /boot/efi/EFI/refind/refind.conf
 		
 		##Increase ZFSBootMenu timer to allow for remote connection
 		sed -i 's,zbm.timeout=$timeout_zbm_no_remote_access,zbm.timeout=$timeout_zbm_remote_access,' /boot/efi/EFI/ubuntu/refind_linux.conf
@@ -408,7 +395,7 @@ systemsetupFunc_part1(){
 	##4. System configuration
 	##4.1 configure hostname
 	echo "$hostname" > "$mountpoint"/etc/hostname
-	echo 127.0.1.1       "$hostname" >> "$mountpoint"/etc/hosts
+	echo "127.0.1.1       $hostname" >> "$mountpoint"/etc/hosts
 	
 	##4.2 configure network interface
 	
@@ -526,6 +513,9 @@ systemsetupFunc_part3(){
 		DEBIAN_FRONTEND=noninteractive apt-get -yq install refind kexec-tools
 		apt install --yes dpkg-dev git systemd-sysv
 		
+		##Adjust timer on initial rEFInd screen
+		sed -i 's,^timeout .*,timeout $timeout_rEFInd,' /boot/efi/EFI/refind/refind.conf
+
 		echo REMAKE_INITRD=yes > /etc/dkms/zfs.conf
 		sed -i 's,LOAD_KEXEC=false,LOAD_KEXEC=true,' /etc/default/kexec
 
@@ -586,7 +576,7 @@ systemsetupFunc_part4(){
                     sed -i 's,ro quiet,ro,' /etc/zfsbootmenu/config.yaml
                 fi
 
-				##omit systemd dracut modules to prevent ZBM boot breaking
+				##Omit systemd dracut modules to prevent ZBM boot breaking
 				cat <<-EOF >> /etc/zfsbootmenu/dracut.conf.d/zfsbootmenu.conf
 					omit_dracutmodules+=" systemd systemd-initrd dracut-systemd "
 				EOF
@@ -602,7 +592,7 @@ systemsetupFunc_part4(){
 				##Generate ZFSBootMenu
 				generate-zbm
 				
-				##Create refind_linux.conf
+				##Update refind_linux.conf
 				##zfsbootmenu command-line parameters:
 				##https://github.com/zbm-dev/zfsbootmenu/blob/master/pod/zfsbootmenu.7.pod
 				cat <<-EOF > /boot/efi/EFI/ubuntu/refind_linux.conf
@@ -611,8 +601,8 @@ systemsetupFunc_part4(){
 				EOF
 				
 				if [ "$quiet_boot" = "no" ]; then
-                    sed -i 's,ro quiet,ro,' /boot/efi/EFI/ubuntu/refind_linux.conf
-                fi
+                    			sed -i 's,ro quiet,ro,' /boot/efi/EFI/ubuntu/refind_linux.conf
+                		fi
 
 			}
 			config_zbm	
