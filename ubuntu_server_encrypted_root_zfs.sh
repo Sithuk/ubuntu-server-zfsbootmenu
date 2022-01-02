@@ -115,7 +115,7 @@ identify_ubuntu_dataset_uuid(){
 
 ipv6_apt_live_iso_fix(){
 	##Try diabling ipv6 in the live iso if setting the preference to ipv4 doesn't work \
-	## to resolve slow apt get and slow debootstrap in the live Ubuntu iso.
+	## to resolve slow apt-get and slow debootstrap in the live Ubuntu iso.
 	##https://askubuntu.com/questions/620317/apt-get-update-stuck-connecting-to-security-ubuntu-com
 	
 	prefer_ipv4(){
@@ -146,8 +146,11 @@ debootstrap_part1_Func(){
 	##use closest mirrors
 	cp /etc/apt/sources.list /etc/apt/sources.list.bak
 	#sed -i 's,deb http://security,#deb http://security,' /etc/apt/sources.list ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
-	sed -i -e 's/http:\/\/archive/mirror:\/\/mirrors/' -e 's/\/ubuntu\//\/mirrors.txt/' /etc/apt/sources.list
-	sed -i '/mirrors/ s,main restricted,main restricted universe multiverse,' /etc/apt/sources.list
+	sed -i \
+		-e 's/http:\/\/archive/mirror:\/\/mirrors/' \
+		-e 's/\/ubuntu\//\/mirrors.txt/' \
+		-e '/mirrors/ s,main restricted,main restricted universe multiverse,' \
+		/etc/apt/sources.list
 	cat /etc/apt/sources.list
 	
 	trap 'printf "%s\n%s" "The script has experienced an error during the first apt update. That may have been caused by a queried server not responding in time. Try running the script again." "If the issue is the security server not responding, then comment out the security server in the /etc/apt/sources.list. Alternatively, you can uncomment the command that does this in the install script. This affects the temporary live iso only. Not the permanent installation."' ERR
@@ -317,10 +320,12 @@ remote_zbm_access_Func(){
 		rm /usr/lib/dracut/modules.d/60crypt-ssh/Makefile
 		
 		##comment out references to /helper/ folder from module-setup.sh
-		sed -i 's,  inst "\$moddir"/helper/console_auth /bin/console_auth,  #inst "\$moddir"/helper/console_auth /bin/console_auth,' "$modulesetup"
-		sed -i 's,  inst "\$moddir"/helper/console_peek.sh /bin/console_peek,  #inst "\$moddir"/helper/console_peek.sh /bin/console_peek,' "$modulesetup"
-		sed -i 's,  inst "\$moddir"/helper/unlock /bin/unlock,  #inst "\$moddir"/helper/unlock /bin/unlock,' "$modulesetup"
-		sed -i 's,  inst "\$moddir"/helper/unlock-reap-success.sh /sbin/unlock-reap-success,  #inst "\$moddir"/helper/unlock-reap-success.sh /sbin/unlock-reap-success,' "$modulesetup"
+		sed -i \
+			-e 's,  inst "\$moddir"/helper/console_auth /bin/console_auth,  #inst "\$moddir"/helper/console_auth /bin/console_auth,' \
+			-e 's,  inst "\$moddir"/helper/console_peek.sh /bin/console_peek,  #inst "\$moddir"/helper/console_peek.sh /bin/console_peek,' \
+			-e 's,  inst "\$moddir"/helper/unlock /bin/unlock,  #inst "\$moddir"/helper/unlock /bin/unlock,' \
+			-e 's,  inst "\$moddir"/helper/unlock-reap-success.sh /sbin/unlock-reap-success,  #inst "\$moddir"/helper/unlock-reap-success.sh /sbin/unlock-reap-success,' \
+			"$modulesetup"
 		
 		##create host keys
 		mkdir -p /etc/dropbear
@@ -572,9 +577,9 @@ systemsetupFunc_part4(){
 					  CommandLine: ro quiet loglevel=0
 				EOF
 			
-                if [ "$quiet_boot" = "no" ]; then
-                    sed -i 's,ro quiet,ro,' /etc/zfsbootmenu/config.yaml
-                fi
+                		if [ "$quiet_boot" = "no" ]; then
+                    			sed -i 's,ro quiet,ro,' /etc/zfsbootmenu/config.yaml
+                		fi
 
 				##Omit systemd dracut modules to prevent ZBM boot breaking
 				cat <<-EOF >> /etc/zfsbootmenu/dracut.conf.d/zfsbootmenu.conf
@@ -584,10 +589,8 @@ systemsetupFunc_part4(){
 				##Install zfsbootmenu dependencies
 				apt install --yes libconfig-inifiles-perl libsort-versions-perl libboolean-perl fzf mbuffer
 				cpan 'YAML::PP'
-				
 
 				update-initramfs -k all -c
-
 				
 				##Generate ZFSBootMenu
 				generate-zbm
