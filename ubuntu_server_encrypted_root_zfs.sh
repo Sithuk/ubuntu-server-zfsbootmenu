@@ -1,5 +1,5 @@
 #!/bin/bash
-##Script date: 2021-01-01
+##Script date: 2022-01-01
 
 set -euo pipefail
 set -x
