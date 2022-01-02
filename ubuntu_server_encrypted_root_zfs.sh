@@ -22,7 +22,7 @@ set -x
 ##  as that will use the user's authorized_keys file. Setting the remoteaccess variable to "yes" will use root's authorized_keys.
 ##Login as "root" during remote access, even if using a user's authorized_keys file. No other users are available during remote access.
 ##The user's authorized_keys file will not be available until the user account is created in part 2 of the script.
-##So remote login using root's authorized_keys file is the only option during the 1st reboot.
+##So remote login using root's authorized_keys file is the only option during the first reboot.
 
 ##A non-root drive can be setup as an encrypted data pool using the "datapool" option.
 ##The drive will be unlocked automatically after the root drive password is entered at boot.
