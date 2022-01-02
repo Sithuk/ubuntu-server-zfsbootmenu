@@ -24,6 +24,19 @@ Reboot after the initial installation completes and login to the new install. Us
 
 	./ubuntu_server_encrypted_root_zfs.sh postreboot
 
+## Optional: Remote access during boot
+The script includes an optional feature to provide remote access during boot. Remote access over ssh allows the system state to be rolled back to a previous snapshot. This is helpful to return a system to a bootable state following a failed upgrade.
+
+Run the following optional part of the script to enable remote access to zfsbootmenu during boot. Guidance on the use of zfsbootmenu can be found at its project website linked in the credits below.
+
+	./ubuntu_server_encrypted_root_zfs.sh remoteaccess
+
+## Optional: Create a zfs data pool
+The script includes an optional feature to create an encrypted zfs data pool on a non-root drive. The data pool will be unlocked automatically after the root drive password is entered at boot.
+
+	./ubuntu_server_encrypted_root_zfs.sh datapool
+
+## FAQ
 Additional guidance and notes can be found in the script.
 
 ## Reddit discussion thread
