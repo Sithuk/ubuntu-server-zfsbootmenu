@@ -3,7 +3,7 @@
 ##Script date: 2022-03-06
 
 set -euo pipefail
-set -x
+#set -x
 
 ##Usage: <script_filename> initial | postreboot | remoteaccess | datapool
 
@@ -51,13 +51,13 @@ zfs_rpool_ashift="12" #Drive setting for zfs pool. ashift=9 means 512B sectors (
 
 RPOOL="rpool" #Root pool name.
 topology_root="single" #single, mirror, raidz1, raidz2, or raidz3 topology on root pool.
-raidz_disks_root="0" #Number of disks in raidz array for root pool. Not used with single or mirror topology.
+disks_root="1" #Number of disks in array for root pool. Not used with single topology.
 EFI_boot_size="512" #EFI boot loader partition size in mebibytes (MiB).
 swap_size="500" #Swap partition size in mebibytes (MiB). Size of swap will be larger than defined here with Raidz topologies.
 openssh="yes" #"yes" to install open-ssh server in new install.
 datapool="datapool" #Non-root drive data pool name.
-topology_data="mirror" #single, mirror, raidz1, raidz2, or raidz3 topology on data pool.
-raidz_disks_data="2" #Number of disks in raidz array for data pool. Not used with single or mirror topology.
+topology_data="single" #single, mirror, raidz1, raidz2, or raidz3 topology on data pool.
+disks_data="1" #Number of disks in array for data pool. Not used with single topology.
 datapoolmount="/mnt/$datapool" #Non-root drive data pool mount point in new install.
 zfs_dpool_ashift="12" #See notes for rpool ashift. If ashift is set too low, a significant read/write penalty is incurred. Virtually no penalty if set higher.
 zfs_compression="zstd" #lz4 is the zfs default; zstd may offer better compression at a cost of higher cpu usage.
@@ -86,20 +86,32 @@ else
    exit 1
 fi
 
-##Check that number of disks meets minimum number for selected RAIDZ topology.
+##Check that number of disks meets minimum number for selected topology.
 for pool in "root" "data" 
 do
 	topology_pool_pointer="topology_$pool"
 	eval echo \$"${topology_pool_pointer}"
 	eval topology_pool_pointer="\$${topology_pool_pointer}"
 	case "$topology_pool_pointer" in
-		single | mirror) true ;;
+		single) true ;;
+		
+		mirror)
+			disks_pointer="disks_${pool}"
+			eval echo \$"${disks_pointer}"
+			eval disks_pointer=\$"${disks_pointer}"
+			if [ "$disks_pointer" -lt 2 ]
+			then
+				echo "Mirror topology requires at least 2 disks. Check variable for number of disks or change the selected topology."
+				exit 1
+			else true
+			fi
+		;;
 		
 		raidz1)
-			raidz_disks_pointer="raidz_disks_${pool}"
-			eval echo \$"${raidz_disks_pointer}"
-			eval raidz_disks_pointer=\$"${raidz_disks_pointer}"
-			if [ "$raidz_disks_pointer" -lt 2 ]
+			disks_pointer="disks_${pool}"
+			eval echo \$"${disks_pointer}"
+			eval disks_pointer=\$"${disks_pointer}"
+			if [ "$disks_pointer" -lt 2 ]
 			then
 				echo "Raidz1 topology requires at least 2 disks. Check variable for number of disks or change the selected topology."
 				exit 1
@@ -108,10 +120,10 @@ do
 		;;
 
 		raidz2)
-			raidz_disks_pointer="raidz_disks_${pool}"
-			eval echo \$"${raidz_disks_pointer}"
-			eval raidz_disks_pointer=\$"${raidz_disks_pointer}"
-			if [ "$raidz_disks_pointer" -lt 3 ]
+			disks_pointer="disks_${pool}"
+			eval echo \$"${disks_pointer}"
+			eval disks_pointer=\$"${disks_pointer}"
+			if [ "$disks_pointer" -lt 3 ]
 			then
 				echo "Raidz2 topology requires at least 3 disks. Check variable for number of disks or change the selected topology."
 				exit 1
@@ -120,10 +132,10 @@ do
 		;;
 
 		raidz3)
-			raidz_disks_pointer="raidz_disks_${pool}"
-			eval echo \$"${raidz_disks_pointer}"
-			eval raidz_disks_pointer=\$"${raidz_disks_pointer}"
-			if [ "$raidz_disks_pointer" -lt 4 ]
+			disks_pointer="disks_${pool}"
+			eval echo \$"${disks_pointer}"
+			eval disks_pointer=\$"${disks_pointer}"
+			if [ "$disks_pointer" -lt 4 ]
 			then
 				echo "Raidz3 topology requires at least 4 disks. Check variable for number of disks or change the selected topology."
 				exit 1
@@ -136,7 +148,7 @@ do
 			exit 1
 		;;
 	esac
-echo "RAIDZ topology check passed for $pool pool."
+echo "Minimum disk topology check passed for $pool pool."
 done	
 
 ##Functions
@@ -155,9 +167,35 @@ getdiskID(){
 	diskidnum="$2"
 	total_discs="$3"
 	##Get disk UUID
-	ls -la /dev/disk/by-id
-	echo "Enter Disk ID for disk $diskidnum of $total_discs on $pool pool (must match exactly):"
-	read -r DISKID
+	
+	
+	manual_read(){
+		ls -la /dev/disk/by-id
+		echo "Enter Disk ID for disk $diskidnum of $total_discs on $pool pool (must match exactly):"
+		read -r DISKID
+	}
+	#manual_read
+	
+	menu_read(){
+		diskidmenu_loc="/tmp/diskidmenu.txt"
+		ls -la /dev/disk/by-id | awk '{ print $9, $11 }' | sed -e '1,3d' | grep -v "part" > "$diskidmenu_loc"
+		
+		echo "Please select Disk ID for disk $diskidnum of $total_discs on $pool pool."
+		nl "$diskidmenu_loc"
+		count="$(wc -l "$diskidmenu_loc" | cut -f 1 -d' ')"
+		n=""
+		while true; 
+		do
+			read -r -p 'Select option: ' n
+			if [ "$n" -eq "$n" ] && [ "$n" -gt 0 ] && [ "$n" -le "$count" ]; then
+				break
+			fi
+		done
+		DISKID="$(sed -n "${n}p" "$diskidmenu_loc" | awk '{ print $1 }' )"
+		echo "Option number $n selected: '$DISKID'"
+	}
+	menu_read
+	
 	#DISKID=ata-VBOX_HARDDISK_VBXXXXXXXX-XXXXXXXX ##manual override
 	##error check
 	errchk="$(find /dev/disk/by-id -maxdepth 1 -mindepth 1 -name "$DISKID")"
@@ -176,7 +214,7 @@ getdiskID(){
 	
 	printf "%s\n" "$DISKID" >> /tmp/diskid_check_"${pool}".txt
 	
-	echo "Disk ID set to ""$DISKID"""
+	echo "Disk ID selected: ""$DISKID"""
 }
 
 getdiskID_pool(){
@@ -193,28 +231,20 @@ getdiskID_pool(){
 			getdiskID "$pool" "1" "1"
 		;;
 
-		mirror)
-			echo "The $pool pool disk topology is a two disk mirror."
-			for diskidnum in "1" "2"
-			do
-				getdiskID "$pool" "$diskidnum" "2"
-			done
-		;;
-		
-		raidz*)
+		raidz*|mirror)
 			topology_pool_pointer="topology_$pool"
 			eval echo \$"${topology_pool_pointer}"
 			eval topology_pool_pointer="\$${topology_pool_pointer}"
 			
-			raidz_disks_pointer="raidz_disks_${pool}"
-			eval echo \$"${raidz_disks_pointer}"
-			eval raidz_disks_pointer=\$"${raidz_disks_pointer}"
+			disks_pointer="disks_${pool}"
+			eval echo \$"${disks_pointer}"
+			eval disks_pointer=\$"${disks_pointer}"
 			
-			echo "The $pool pool disk topology is $topology_pool_pointer with $raidz_disks_pointer disks."
+			echo "The $pool pool disk topology is $topology_pool_pointer with $disks_pointer disks."
 			diskidnum="1"
-			while [ "$diskidnum" -le "$raidz_disks_pointer" ];
+			while [ "$diskidnum" -le "$disks_pointer" ];
 			do
-				getdiskID "$pool" "$diskidnum" "$raidz_disks_pointer"
+				getdiskID "$pool" "$diskidnum" "$disks_pointer"
 				diskidnum=$(( diskidnum + 1 ))
 			done
 		;;
@@ -323,14 +353,10 @@ debootstrap_part1_Func(){
 		##FD00 Linux RAID
 
 		case "$topology_root" in
-			single)
+			single|mirror)
 				swap_hex_code="8200"
 			;;
 
-			mirror)
-				swap_hex_code="8200"
-			;;
-			
 			raidz*)
 				swap_hex_code="FD00"
 			;;
@@ -833,7 +859,7 @@ systemsetupFunc_part5(){
 	multi_disc_swap_loc="/tmp/multi_disc_swap.sh"
 	
 	multi_disc_swap_Func(){
-		mdadm_level="$1" ##ZFS raidz = MDADM raid5, raidz2 = raid6. MDADM does not have raid7, so no raidz3 3 disk parity equivalent.
+		mdadm_level="$1" ##ZFS raidz = MDADM raid5, raidz2 = raid6. MDADM does not have raid7, so no triple parity equivalent to raidz3.
 		mdadm_devices="$2" ##Number of disks.
 	
 		cat > "$multi_disc_swap_loc" <<-EOF
@@ -886,20 +912,20 @@ systemsetupFunc_part5(){
 
 		mirror)
 			##mdadm --level=mirror is the same as --level=1.
-			multi_disc_swap_Func "mirror" "2"
+			multi_disc_swap_Func "mirror" "$disks_root"
 		;;
 
 		raidz1)
-			multi_disc_swap_Func "5" "$raidz_disks_root"
+			multi_disc_swap_Func "5" "$disks_root"
 		;;
 
 		raidz2)
-			multi_disc_swap_Func "6" "$raidz_disks_root"
+			multi_disc_swap_Func "6" "$disks_root"
 		;;
 
 		raidz3)
 			##mdadm has no equivalent raid7 to raidz3. Use raid6.
-			multi_disc_swap_Func "6" "$raidz_disks_root"
+			multi_disc_swap_Func "6" "$disks_root"
 		;;
 
 		*)
@@ -1179,7 +1205,7 @@ createdatapool(){
 				echo "/dev/disk/by-id/${diskidnum} \\" >> "$zpool_create_temp"
 			done < /tmp/diskid_check_data.txt
 		
-			sed -i '$s,\\,,' "$zpool_create_temp"
+			sed -i '$s,\\,,' "$zpool_create_temp" ##Remove escape characters needed for last line of EOF code block.
 		}
 
 
