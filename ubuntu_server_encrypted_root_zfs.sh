@@ -1,5 +1,6 @@
 #!/bin/bash
-##Script date: 2022-01-02
+##Scripts installs ubuntu server on encrypted zfs with headless remote unlocking and snapshot rollback at boot.
+##Script date: 2022-03-06
 
 set -euo pipefail
 set -x
@@ -48,11 +49,15 @@ locale="en_GB.UTF-8" #New install language setting.
 timezone="Europe/London" #New install timezone setting.
 zfs_rpool_ashift="12" #Drive setting for zfs pool. ashift=9 means 512B sectors (used by all ancient drives), ashift=12 means 4KiB sectors (used by most modern hard drives), and ashift=13 means 8KiB sectors (used by some modern SSDs).
 
-EFI_boot_size="512" #EFI boot loader partition size in mebibytes (MiB).
-swap_size="500" #Swap partition size in mebibytes (MiB).
 RPOOL="rpool" #Root pool name.
+topology_root="single" #single, mirror, raidz1, raidz2, or raidz3 topology on root pool.
+raidz_disks_root="0" #Number of disks in raidz array for root pool. Not used with single or mirror topology.
+EFI_boot_size="512" #EFI boot loader partition size in mebibytes (MiB).
+swap_size="500" #Swap partition size in mebibytes (MiB). Size of swap will be larger than defined here with Raidz topologies.
 openssh="yes" #"yes" to install open-ssh server in new install.
 datapool="datapool" #Non-root drive data pool name.
+topology_data="mirror" #single, mirror, raidz1, raidz2, or raidz3 topology on data pool.
+raidz_disks_data="2" #Number of disks in raidz array for data pool. Not used with single or mirror topology.
 datapoolmount="/mnt/$datapool" #Non-root drive data pool mount point in new install.
 zfs_dpool_ashift="12" #See notes for rpool ashift. If ashift is set too low, a significant read/write penalty is incurred. Virtually no penalty if set higher.
 zfs_compression="zstd" #lz4 is the zfs default; zstd may offer better compression at a cost of higher cpu usage.
@@ -81,6 +86,59 @@ else
    exit 1
 fi
 
+##Check that number of disks meets minimum number for selected RAIDZ topology.
+for pool in "root" "data" 
+do
+	topology_pool_pointer="topology_$pool"
+	eval echo \$"${topology_pool_pointer}"
+	eval topology_pool_pointer="\$${topology_pool_pointer}"
+	case "$topology_pool_pointer" in
+		single | mirror) true ;;
+		
+		raidz1)
+			raidz_disks_pointer="raidz_disks_${pool}"
+			eval echo \$"${raidz_disks_pointer}"
+			eval raidz_disks_pointer=\$"${raidz_disks_pointer}"
+			if [ "$raidz_disks_pointer" -lt 2 ]
+			then
+				echo "Raidz1 topology requires at least 2 disks. Check variable for number of disks or change the selected topology."
+				exit 1
+			else true
+			fi
+		;;
+
+		raidz2)
+			raidz_disks_pointer="raidz_disks_${pool}"
+			eval echo \$"${raidz_disks_pointer}"
+			eval raidz_disks_pointer=\$"${raidz_disks_pointer}"
+			if [ "$raidz_disks_pointer" -lt 3 ]
+			then
+				echo "Raidz2 topology requires at least 3 disks. Check variable for number of disks or change the selected topology."
+				exit 1
+			else true
+			fi
+		;;
+
+		raidz3)
+			raidz_disks_pointer="raidz_disks_${pool}"
+			eval echo \$"${raidz_disks_pointer}"
+			eval raidz_disks_pointer=\$"${raidz_disks_pointer}"
+			if [ "$raidz_disks_pointer" -lt 4 ]
+			then
+				echo "Raidz3 topology requires at least 4 disks. Check variable for number of disks or change the selected topology."
+				exit 1
+			else true
+			fi
+		;;
+
+		*)
+			echo "Pool topology not recognised. Check pool topology variable."
+			exit 1
+		;;
+	esac
+echo "RAIDZ topology check passed for $pool pool."
+done	
+
 ##Functions
 logFunc(){
 	# Log everything we do
@@ -93,9 +151,12 @@ disclaimer(){
 }
 
 getdiskID(){
-	##Get root Disk UUID
+	pool="$1"
+	diskidnum="$2"
+	total_discs="$3"
+	##Get disk UUID
 	ls -la /dev/disk/by-id
-	echo "Enter Disk ID (must match exactly):"
+	echo "Enter Disk ID for disk $diskidnum of $total_discs on $pool pool (must match exactly):"
 	read -r DISKID
 	#DISKID=ata-VBOX_HARDDISK_VBXXXXXXXX-XXXXXXXX ##manual override
 	##error check
@@ -105,7 +166,75 @@ getdiskID(){
 		echo "Disk ID not found. Exiting."
 		exit 1
 	fi
+		
+	errchk="$(grep "$DISKID" /tmp/diskid_check_"${pool}".txt || true)"
+	if [ -n "$errchk" ];
+	then
+		echo "Disk ID has already been entered. Exiting."
+		exit 1
+	fi
+	
+	printf "%s\n" "$DISKID" >> /tmp/diskid_check_"${pool}".txt
+	
 	echo "Disk ID set to ""$DISKID"""
+}
+
+getdiskID_pool(){
+	pool="$1" #root or data
+	##Create temp file to check for duplicated UUID entry.
+	true > /tmp/diskid_check_"${pool}".txt
+	
+	topology_pool_pointer="topology_$pool"
+	eval echo \$"${topology_pool_pointer}"
+	eval topology_pool_pointer="\$${topology_pool_pointer}"
+	case "$topology_pool_pointer" in
+		single)
+			echo "The $pool pool disk topology is a single disk."
+			getdiskID "$pool" "1" "1"
+		;;
+
+		mirror)
+			echo "The $pool pool disk topology is a two disk mirror."
+			for diskidnum in "1" "2"
+			do
+				getdiskID "$pool" "$diskidnum" "2"
+			done
+		;;
+		
+		raidz*)
+			topology_pool_pointer="topology_$pool"
+			eval echo \$"${topology_pool_pointer}"
+			eval topology_pool_pointer="\$${topology_pool_pointer}"
+			
+			raidz_disks_pointer="raidz_disks_${pool}"
+			eval echo \$"${raidz_disks_pointer}"
+			eval raidz_disks_pointer=\$"${raidz_disks_pointer}"
+			
+			echo "The $pool pool disk topology is $topology_pool_pointer with $raidz_disks_pointer disks."
+			diskidnum="1"
+			while [ "$diskidnum" -le "$raidz_disks_pointer" ];
+			do
+				getdiskID "$pool" "$diskidnum" "$raidz_disks_pointer"
+				diskidnum=$(( diskidnum + 1 ))
+			done
+		;;
+
+		*)
+			echo "Pool topology not recognised. Check pool topology variable."
+			exit 1
+		;;
+
+	esac
+
+}
+
+clear_partition_table(){
+	pool="$1" #root or data
+	while IFS= read -r diskidnum;
+	do
+		echo "Clearing partition table on disk ${diskidnum}."
+		sgdisk --zap-all /dev/disk/by-id/"$diskidnum"
+	done < /tmp/diskid_check_"${pool}".txt
 }
 
 identify_ubuntu_dataset_uuid(){
@@ -145,7 +274,7 @@ ipv6_apt_live_iso_fix(){
 debootstrap_part1_Func(){
 	##use closest mirrors
 	cp /etc/apt/sources.list /etc/apt/sources.list.bak
-	#sed -i 's,deb http://security,#deb http://security,' /etc/apt/sources.list ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
+	sed -i 's,deb http://security,#deb http://security,' /etc/apt/sources.list ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
 	sed -i \
 		-e 's/http:\/\/archive/mirror:\/\/mirrors/' \
 		-e 's/\/ubuntu\//\/mirrors.txt/' \
@@ -178,7 +307,7 @@ debootstrap_part1_Func(){
 	##2.2 Wipe disk 
 	
 	##Clear partition table
-	sgdisk --zap-all /dev/disk/by-id/"$DISKID"
+	clear_partition_table "root"
 	sleep 2
 
 	##Partition disk
@@ -191,20 +320,45 @@ debootstrap_part1_Func(){
 		##BF01 Solaris /usr & Mac Z
 		##8200 Linux swap
 		##8300 Linux file system
+		##FD00 Linux RAID
+
+		case "$topology_root" in
+			single)
+				swap_hex_code="8200"
+			;;
+
+			mirror)
+				swap_hex_code="8200"
+			;;
+			
+			raidz*)
+				swap_hex_code="FD00"
+			;;
+
+			*)
+				echo ""
+				exit 1
+			;;
+		esac
 		
-		##2.3 create bootloader partition
-		sgdisk -n1:1M:+"$EFI_boot_size"M -t1:EF00 /dev/disk/by-id/"$DISKID"
+		while IFS= read -r diskidnum;
+		do
+			echo "Creating partitions on disk ${diskidnum}."
+			##2.3 create bootloader partition
+			sgdisk -n1:1M:+"$EFI_boot_size"M -t1:EF00 /dev/disk/by-id/"${diskidnum}"
 		
-		##2.4 create swap partition 
-		##bug with swap on zfs zvol so use swap on partition:
-		##https://github.com/zfsonlinux/zfs/issues/7734
-		##hibernate needs swap at least same size as RAM
-		##hibernate only works with unencrypted installs
-		sgdisk -n2:0:+"$swap_size"M -t2:8200 /dev/disk/by-id/"$DISKID"
+			##2.4 create swap partition 
+			##bug with swap on zfs zvol so use swap on partition:
+			##https://github.com/zfsonlinux/zfs/issues/7734
+			##hibernate needs swap at least same size as RAM
+			##hibernate only works with unencrypted installs
+			sgdisk -n2:0:+"$swap_size"M -t2:"$swap_hex_code" /dev/disk/by-id/"${diskidnum}"
 		
-		##2.6 Create root pool partition
-		##Unencrypted or ZFS native encryption:
-		sgdisk     -n3:0:0      -t3:BF00 /dev/disk/by-id/"$DISKID" 
+			##2.6 Create root pool partition
+			##Unencrypted or ZFS native encryption:
+			sgdisk     -n3:0:0      -t3:BF00 /dev/disk/by-id/"${diskidnum}"
+		
+		done < /tmp/diskid_check_"${pool}".txt
 		sleep 2
 	}
 	partitionsFunc
@@ -215,22 +369,69 @@ debootstrap_createzfspools_Func(){
 	zpool_encrypted_Func(){
 		##2.8b create root pool encrypted
 		echo Password must be min 8 characters.
-		zpool create -f \
-			-o ashift="$zfs_rpool_ashift" \
-			-o autotrim=on \
-			-O acltype=posixacl \
-			-O canmount=off \
-			-O compression="$zfs_compression" \
-			-O dnodesize=auto \
-			-O normalization=formD \
-			-O relatime=on \
-			-O xattr=sa \
-			-O encryption=aes-256-gcm -O keylocation=prompt -O keyformat=passphrase \
-			-O mountpoint=/ -R "$mountpoint" \
-			"$RPOOL" /dev/disk/by-id/"$DISKID"-part3
-	}
+		
+		zpool_create_temp="/tmp/${RPOOL}_creation.sh"
+		cat > "$zpool_create_temp" <<-EOF
+			zpool create -f \
+				-o ashift=$zfs_rpool_ashift \
+				-o autotrim=on \
+				-O acltype=posixacl \
+				-O canmount=off \
+				-O compression=$zfs_compression \
+				-O dnodesize=auto \
+				-O normalization=formD \
+				-O relatime=on \
+				-O xattr=sa \
+				-O encryption=aes-256-gcm -O keylocation=prompt -O keyformat=passphrase \
+				-O mountpoint=/ -R "$mountpoint" \\
+		EOF
 
-	echo -e "$zfspassword" | zpool_encrypted_Func
+		add_zpool_disks(){
+			while IFS= read -r diskidnum;
+			do
+				echo "/dev/disk/by-id/${diskidnum}-part3 \\" >> "$zpool_create_temp"
+			done < /tmp/diskid_check_root.txt
+		
+			sed -i '$s,\\,,' "$zpool_create_temp"
+		}
+
+
+		case "$topology_root" in
+			single)
+				echo "$RPOOL \\" >> "$zpool_create_temp"	
+				add_zpool_disks
+			;;
+
+			mirror)
+				echo "$RPOOL mirror \\" >> "$zpool_create_temp"
+				add_zpool_disks
+			;;
+			
+			raidz1)
+				echo "$RPOOL raidz1 \\" >> "$zpool_create_temp"
+				add_zpool_disks	
+			;;
+
+			raidz2)
+				echo "$RPOOL raidz2 \\" >> "$zpool_create_temp"
+				add_zpool_disks	
+			;;
+
+			raidz3)
+				echo "$RPOOL raidz3 \\" >> "$zpool_create_temp"
+				add_zpool_disks	
+			;;
+
+			*)
+				echo "Pool topology not recognised. Check pool topology variable."
+				exit 1
+			;;
+
+		esac
+		
+	}
+	zpool_encrypted_Func
+	echo -e "$zfspassword" | sh "$zpool_create_temp" 
 	
 	##3. System installation
 	mountpointsFunc(){
@@ -626,15 +827,89 @@ systemsetupFunc_part5(){
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		##4.11 set root password
 		echo -e "root:$PASSWORD" | chpasswd
+	EOCHROOT
+	
+	##4.12 configure swap
+	multi_disc_swap_loc="/tmp/multi_disc_swap.sh"
+	
+	multi_disc_swap_Func(){
+		mdadm_level="$1" ##ZFS raidz = MDADM raid5, raidz2 = raid6. MDADM does not have raid7, so no raidz3 3 disk parity equivalent.
+		mdadm_devices="$2" ##Number of disks.
+	
+		cat > "$multi_disc_swap_loc" <<-EOF
+			##Swap setup for mirror or raidz topology.
+			apt install --yes cryptsetup mdadm
 
+			##Set MDADM level and number of disks.
+			mdadm --create /dev/md0 --metadata=1.2 \
+			--level="$mdadm_level" \
+			--raid-devices="$mdadm_devices" \\
+		EOF
+	
+		##Add swap disks.
+		while IFS= read -r diskidnum;
+		do
+			echo "/dev/disk/by-id/${diskidnum}-part2 \\" >> "$multi_disc_swap_loc"
+		done < /tmp/diskid_check_root.txt
+		sed -i '$s,\\,,' "$zpool_create_temp" ##Remove escape characters needed for last line of EOF code block.
+	
+		##Update fstab and cryptsetup.
+		cat >> "$multi_disc_swap_loc" <<-EOF
+			##"plain" required in crypttab to avoid message at boot: "From cryptsetup: couldn't determine device type, assuming default (plain)."
+			echo swap /dev/md0 /dev/urandom \
+				  plain,swap,cipher=aes-xts-plain64:sha256,size=512 >> /etc/crypttab
+			echo /dev/mapper/swap none swap defaults 0 0 >> /etc/fstab
+		EOF
+		
+		##Check MDADM status.
+		cat >> "$multi_disc_swap_loc" <<-EOF
+			cat /proc/mdstat
+			mdadm --detail /dev/md0
+		EOF
+		
+		##Copy MDADM setup file into chroot and run. 
+		cp "$multi_disc_swap_loc" "$mountpoint"/tmp/
+		chroot "$mountpoint" /bin/bash -x "$multi_disc_swap_loc"
+	}
+	
+	case "$topology_root" in
+		single)
+			chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+			##Single disk install
+			apt install --yes cryptsetup
+			##"plain" required in crypttab to avoid message at boot: "From cryptsetup: couldn't determine device type, assuming default (plain)."
+			echo swap /dev/disk/by-id/"$DISKID"-part2 /dev/urandom \
+				plain,swap,cipher=aes-xts-plain64:sha256,size=512 >> /etc/crypttab
+			echo /dev/mapper/swap none swap defaults 0 0 >> /etc/fstab
+			EOCHROOT
+		;;
 
-		##4.12 configure swap
-		apt install --yes cryptsetup
-		##"plain" required in crypttab to avoid message at boot: "From cryptsetup: couldn't determine device type, assuming default (plain)."
-		echo swap /dev/disk/by-id/"$DISKID"-part2 /dev/urandom \
-			plain,swap,cipher=aes-xts-plain64:sha256,size=512 >> /etc/crypttab
-		echo /dev/mapper/swap none swap defaults 0 0 >> /etc/fstab
+		mirror)
+			##mdadm --level=mirror is the same as --level=1.
+			multi_disc_swap_Func "mirror" "2"
+		;;
 
+		raidz1)
+			multi_disc_swap_Func "5" "$raidz_disks_root"
+		;;
+
+		raidz2)
+			multi_disc_swap_Func "6" "$raidz_disks_root"
+		;;
+
+		raidz3)
+			##mdadm has no equivalent raid7 to raidz3. Use raid6.
+			multi_disc_swap_Func "6" "$raidz_disks_root"
+		;;
+
+		*)
+			echo "Pool topology not recognised. Check pool topology variable."
+			exit 1
+		;;
+
+	esac
+	
+	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		##4.13 mount a tmpfs to /tmp
 		cp /usr/share/systemd/tmp.mount /etc/systemd/system/
 		systemctl enable tmp.mount
@@ -847,10 +1122,6 @@ setupremoteaccess(){
 createdatapool(){
 	disclaimer
 		
-	##Get datapool disk UUID
-	echo "Enter diskID for non-root drive to create data pool on."
-	getdiskID
-	
 	##Check on whether data pool already exists
 	if [ "$(zpool status "$datapool")" ];
 	then
@@ -859,8 +1130,12 @@ createdatapool(){
 	else true
 	fi
 	
-	##2.1 wipe disk
-	sgdisk --zap-all /dev/disk/by-id/"$DISKID"
+	##Get datapool disk UUID
+	echo "Enter diskID for non-root drive to create data pool on."
+	getdiskID_pool "data"
+	
+	##Clear partition table
+	clear_partition_table "data"
 	sleep 2
 	
 	##create pool mount point
@@ -879,20 +1154,71 @@ createdatapool(){
 	datapool_keyloc="/etc/zfs/$RPOOL.key"
 
 	##Create data pool
-	echo "$datapoolmount"
-	zpool create \
-		-o ashift="$zfs_dpool_ashift" \
-		-O acltype=posixacl \
-		-O compression="$zfs_compression" \
-		-O normalization=formD \
-		-O relatime=on \
-		-O dnodesize=auto \
-		-O xattr=sa \
-		-O encryption=aes-256-gcm \
-		-O keylocation=file://"$datapool_keyloc" \
-		-O keyformat=passphrase \
-		-O mountpoint="$datapoolmount"\
-		"$datapool" /dev/disk/by-id/"$DISKID"
+	create_dpool_Func(){
+		echo "$datapoolmount"
+		
+		zpool_create_temp="/tmp/${datapool}_creation.sh"
+		cat > "$zpool_create_temp" <<-EOF
+			zpool create \
+				-o ashift="$zfs_dpool_ashift" \
+				-O acltype=posixacl \
+				-O compression="$zfs_compression" \
+				-O normalization=formD \
+				-O relatime=on \
+				-O dnodesize=auto \
+				-O xattr=sa \
+				-O encryption=aes-256-gcm \
+				-O keylocation=file://"$datapool_keyloc" \
+				-O keyformat=passphrase \
+				-O mountpoint="$datapoolmount" \\
+		EOF
+
+		add_zpool_disks(){
+			while IFS= read -r diskidnum;
+			do
+				echo "/dev/disk/by-id/${diskidnum} \\" >> "$zpool_create_temp"
+			done < /tmp/diskid_check_data.txt
+		
+			sed -i '$s,\\,,' "$zpool_create_temp"
+		}
+
+
+		case "$topology_root" in
+			single)
+				echo "$datapool \\" >> "$zpool_create_temp"	
+				add_zpool_disks
+			;;
+
+			mirror)
+				echo "$datapool mirror \\" >> "$zpool_create_temp"
+				add_zpool_disks
+			;;
+			
+			raidz1)
+				echo "$datapool raidz1 \\" >> "$zpool_create_temp"
+				add_zpool_disks	
+			;;
+
+			raidz2)
+				echo "$datapool raidz2 \\" >> "$zpool_create_temp"
+				add_zpool_disks	
+			;;
+
+			raidz3)
+				echo "$datapool raidz3 \\" >> "$zpool_create_temp"
+				add_zpool_disks	
+			;;
+
+			*)
+				echo "Pool topology not recognised. Check pool topology variable."
+				exit 1
+			;;
+
+		esac
+	
+	}
+	create_dpool_Func
+	sh "$zpool_create_temp" 
 	
 	##Verify that zed updated the cache by making sure the cache file is not empty.
 	cat /etc/zfs/zfs-list.cache/"$datapool"
@@ -931,7 +1257,7 @@ resettime(){
 
 initialinstall(){
 	disclaimer
-	getdiskID
+	getdiskID_pool "root"
 	ipv6_apt_live_iso_fix #Only if ipv6_apt_fix_live_iso variable is set to "yes".
 	debootstrap_part1_Func
 	debootstrap_createzfspools_Func
