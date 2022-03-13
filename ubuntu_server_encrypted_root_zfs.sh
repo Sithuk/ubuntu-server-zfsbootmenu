@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Scripts installs ubuntu server on encrypted zfs with headless remote unlocking and snapshot rollback at boot.
-##Script date: 2022-03-06
+##Script date: 2022-03-13
 
 set -euo pipefail
 #set -x
@@ -89,58 +89,42 @@ fi
 ##Check that number of disks meets minimum number for selected topology.
 for pool in "root" "data" 
 do
+	echo "Checking number of disks in $pool pool..."
 	topology_pool_pointer="topology_$pool"
-	eval echo \$"${topology_pool_pointer}"
+	eval echo "User defined topology for ${pool} pool: \$${topology_pool_pointer}"
 	eval topology_pool_pointer="\$${topology_pool_pointer}"
+	
+	num_disks_check(){
+		min_num_disks="$1"
+		
+		disks_pointer="disks_${pool}"
+		eval echo "User defined number of disks in pool: \$${disks_pointer}"
+		eval disks_pointer=\$"${disks_pointer}"
+		if [ "$disks_pointer" -lt "$min_num_disks" ]
+		then
+			echo "A ${topology_pool_pointer} topology requires at least ${min_num_disks} disks. Check variable for number of disks or change the selected topology."
+			exit 1
+		else true
+		fi
+	}
+	
 	case "$topology_pool_pointer" in
 		single) true ;;
 		
 		mirror)
-			disks_pointer="disks_${pool}"
-			eval echo \$"${disks_pointer}"
-			eval disks_pointer=\$"${disks_pointer}"
-			if [ "$disks_pointer" -lt 2 ]
-			then
-				echo "Mirror topology requires at least 2 disks. Check variable for number of disks or change the selected topology."
-				exit 1
-			else true
-			fi
+			num_disks_check "2"
 		;;
 		
 		raidz1)
-			disks_pointer="disks_${pool}"
-			eval echo \$"${disks_pointer}"
-			eval disks_pointer=\$"${disks_pointer}"
-			if [ "$disks_pointer" -lt 2 ]
-			then
-				echo "Raidz1 topology requires at least 2 disks. Check variable for number of disks or change the selected topology."
-				exit 1
-			else true
-			fi
+			num_disks_check "2"
 		;;
 
 		raidz2)
-			disks_pointer="disks_${pool}"
-			eval echo \$"${disks_pointer}"
-			eval disks_pointer=\$"${disks_pointer}"
-			if [ "$disks_pointer" -lt 3 ]
-			then
-				echo "Raidz2 topology requires at least 3 disks. Check variable for number of disks or change the selected topology."
-				exit 1
-			else true
-			fi
+			num_disks_check "3"
 		;;
 
 		raidz3)
-			disks_pointer="disks_${pool}"
-			eval echo \$"${disks_pointer}"
-			eval disks_pointer=\$"${disks_pointer}"
-			if [ "$disks_pointer" -lt 4 ]
-			then
-				echo "Raidz3 topology requires at least 4 disks. Check variable for number of disks or change the selected topology."
-				exit 1
-			else true
-			fi
+			num_disks_check "4"
 		;;
 
 		*)
@@ -178,9 +162,9 @@ getdiskID(){
 	
 	menu_read(){
 		diskidmenu_loc="/tmp/diskidmenu.txt"
-		ls -la /dev/disk/by-id | awk '{ print $9, $11 }' | sed -e '1,3d' | grep -v "part" > "$diskidmenu_loc"
+		ls -la /dev/disk/by-id | awk '{ print $9, $11 }' | sed -e '1,3d' | grep -v "part\|CD-ROM" > "$diskidmenu_loc"
 		
-		echo "Please select Disk ID for disk $diskidnum of $total_discs on $pool pool."
+		echo "Please enter Disk ID option for disk $diskidnum of $total_discs on $pool pool."
 		nl "$diskidmenu_loc"
 		count="$(wc -l "$diskidmenu_loc" | cut -f 1 -d' ')"
 		n=""
