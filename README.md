@@ -10,7 +10,8 @@ Supports:
 - Single, mirror, raidz1, raidz2, and raidz3 topologies.
 - Native ZFS encryption.
 - Remote unlocking of encrypted pools at boot (useful for headless systems).
-- Automated snapshots to allow for remote system recovery at boot.
+- Automated system snapshots taken on a timer and also on system updates. 
+- Remote rollback of snapshots at boot for system recovery.
 - Creation of a separate encrypted data pool (single/mirror/raidz).
 
 ## Usage
