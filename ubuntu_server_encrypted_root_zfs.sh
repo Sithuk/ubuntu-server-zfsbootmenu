@@ -7,7 +7,7 @@ set -euo pipefail
 
 ##Usage: <script_filename> initial | postreboot | remoteaccess | datapool
 
-##Script: https://gitlab.com/Sithuk/ubuntu-server-zfsbootmenu
+##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
 ##Discussion: https://www.reddit.com/r/zfs/comments/mj4nfa/ubuntu_server_2104_native_encrypted_root_on_zfs/?utm_source=share&utm_medium=web2x&context=3
 
 ##Script to be run in two parts.
