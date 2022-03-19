@@ -4,6 +4,14 @@ This script creates an ubuntu server installation using the ZFS filesystem. The 
 
 Snapshots allow you to rollback your system to a previous state if there is a problem. The system automatically creates snapshots on a timer and also when the system is updated with apt. Snapshots are pruned over time to keep fewer older snapshots.
 
+Supports:
+- Ubuntu 21.04 or later.
+- Root filesystem on ZFS. 
+- Single, mirror, raidz1, raidz2, and raidz3 topologies.
+- Native ZFS encryption.
+- Remote unlocking of encrypted pools at boot (useful for headless systems).
+- Automated snapshots to allow for remote system recovery at boot.
+- Creation of a separate encrypted data pool (single/mirror/raidz).
 
 ## Usage
 Boot the system with an Ubuntu live desktop iso (ZFS 2.0 support needed for native encryption, so use Ubuntu 21.04 or later). Start the terminal (Ctrl+Alt+T) and enter the following.
