@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Scripts installs ubuntu server on encrypted zfs with headless remote unlocking and snapshot rollback at boot.
-##Script date: 2022-03-13
+##Script date: 2022-03-20
 
 set -euo pipefail
 #set -x
@@ -86,20 +86,23 @@ else
    exit 1
 fi
 
-##Check that number of disks meets minimum number for selected topology.
-for pool in "root" "data" 
-do
-	echo "Checking number of disks in $pool pool..."
+##Functions
+topology_min_disk_check(){
+	##Check that number of disks meets minimum number for selected topology.
+	pool="$1"
+	echo "Checking script variables for $pool pool..."
+	
 	topology_pool_pointer="topology_$pool"
 	eval echo "User defined topology for ${pool} pool: \$${topology_pool_pointer}"
 	eval topology_pool_pointer="\$${topology_pool_pointer}"
 	
+	disks_pointer="disks_${pool}"
+	eval echo "User defined number of disks in pool: \$${disks_pointer}"
+	eval disks_pointer=\$"${disks_pointer}"
+
 	num_disks_check(){
 		min_num_disks="$1"
 		
-		disks_pointer="disks_${pool}"
-		eval echo "User defined number of disks in pool: \$${disks_pointer}"
-		eval disks_pointer=\$"${disks_pointer}"
 		if [ "$disks_pointer" -lt "$min_num_disks" ]
 		then
 			echo "A ${topology_pool_pointer} topology requires at least ${min_num_disks} disks. Check variable for number of disks or change the selected topology."
@@ -111,14 +114,10 @@ do
 	case "$topology_pool_pointer" in
 		single) true ;;
 		
-		mirror)
+		mirror|raidz1)
 			num_disks_check "2"
 		;;
 		
-		raidz1)
-			num_disks_check "2"
-		;;
-
 		raidz2)
 			num_disks_check "3"
 		;;
@@ -132,17 +131,16 @@ do
 			exit 1
 		;;
 	esac
-echo "Minimum disk topology check passed for $pool pool."
-done	
+	printf "%s\n\n" "Minimum disk topology check passed for $pool pool."
+}
 
-##Functions
 logFunc(){
 	# Log everything we do
 	exec > >(tee -a "$log_loc"/"$install_log") 2>&1
 }
 
 disclaimer(){
-	echo "***WARNING*** This script could wipe out all your data, or worse! I am not responsible for your decisions. Carefully enter the ID of the disk YOU WANT TO DESTROY in the next step to ensure no data is accidentally lost. Press Enter to Continue or CTRL+C to abort."
+	echo "***WARNING*** This script could wipe out all your data, or worse! I am not responsible for your decisions. Press Enter to Continue or CTRL+C to abort."
 	read -r _
 }
 
@@ -150,8 +148,8 @@ getdiskID(){
 	pool="$1"
 	diskidnum="$2"
 	total_discs="$3"
-	##Get disk UUID
 	
+	##Get disk ID(s)	
 	
 	manual_read(){
 		ls -la /dev/disk/by-id
@@ -176,7 +174,7 @@ getdiskID(){
 			fi
 		done
 		DISKID="$(sed -n "${n}p" "$diskidmenu_loc" | awk '{ print $1 }' )"
-		echo "Option number $n selected: '$DISKID'"
+		printf "%s\n\n" "Option number $n selected: '$DISKID'"
 	}
 	menu_read
 	
@@ -197,18 +195,27 @@ getdiskID(){
 	fi
 	
 	printf "%s\n" "$DISKID" >> /tmp/diskid_check_"${pool}".txt
-	
-	echo "Disk ID selected: ""$DISKID"""
 }
 
 getdiskID_pool(){
-	pool="$1" #root or data
-	##Create temp file to check for duplicated UUID entry.
+	pool="$1"
+
+	##Check that number of disks meets minimum number for selected topology.
+	topology_min_disk_check "$pool"
+
+	echo "Carefully enter the ID of the disk(s) YOU WANT TO DESTROY in the next step to ensure no data is accidentally lost."
+	
+	##Create temp file to check for duplicated disk ID entry.
 	true > /tmp/diskid_check_"${pool}".txt
 	
 	topology_pool_pointer="topology_$pool"
-	eval echo \$"${topology_pool_pointer}"
+	#eval echo \$"${topology_pool_pointer}"
 	eval topology_pool_pointer="\$${topology_pool_pointer}"
+	
+	disks_pointer="disks_${pool}"
+	#eval echo \$"${disks_pointer}"
+	eval disks_pointer=\$"${disks_pointer}"
+
 	case "$topology_pool_pointer" in
 		single)
 			echo "The $pool pool disk topology is a single disk."
@@ -216,14 +223,6 @@ getdiskID_pool(){
 		;;
 
 		raidz*|mirror)
-			topology_pool_pointer="topology_$pool"
-			eval echo \$"${topology_pool_pointer}"
-			eval topology_pool_pointer="\$${topology_pool_pointer}"
-			
-			disks_pointer="disks_${pool}"
-			eval echo \$"${disks_pointer}"
-			eval disks_pointer=\$"${disks_pointer}"
-			
 			echo "The $pool pool disk topology is $topology_pool_pointer with $disks_pointer disks."
 			diskidnum="1"
 			while [ "$diskidnum" -le "$disks_pointer" ];
@@ -1140,8 +1139,7 @@ createdatapool(){
 	else true
 	fi
 	
-	##Get datapool disk UUID
-	echo "Enter diskID for non-root drive to create data pool on."
+	##Get datapool disk ID(s)
 	getdiskID_pool "data"
 	
 	##Clear partition table
