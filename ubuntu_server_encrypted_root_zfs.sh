@@ -62,7 +62,7 @@ datapoolmount="/mnt/$datapool" #Non-root drive data pool mount point in new inst
 zfs_dpool_ashift="12" #See notes for rpool ashift. If ashift is set too low, a significant read/write penalty is incurred. Virtually no penalty if set higher.
 zfs_compression="zstd" #lz4 is the zfs default; zstd may offer better compression at a cost of higher cpu usage.
 mountpoint="/mnt/ub_server" #Mountpoint in live iso.
-remoteaccess="no" #"yes" to enable remoteaccess during first boot. Recommend leaving as "no" and run script with "remoteaccess". See notes in section above.
+remoteaccess_first_boot="no" #"yes" to enable remoteaccess during first boot. Recommend leaving as "no" and run script with "remoteaccess". See notes in section above.
 timeout_rEFInd="5" #Timeout in seconds for rEFInd boot screen until default choice selected.
 timeout_zbm_no_remote_access="15" #Timeout in seconds for zfsbootmenu when no remote access enabled.
 timeout_zbm_remote_access="30" #Timeout in seconds for zfsbootmenu when remote access enabled.
@@ -71,6 +71,10 @@ ethprefix="e" #First letter of ethernet interface. Used to identify ethernet int
 install_log="ubuntu_setup_zfs_root.log" #Installation log filename.
 log_loc="/var/log" #Installation log location.
 ipv6_apt_fix_live_iso="no" #Try setting to "yes" if apt-get is slow in the ubuntu live iso. Doesn't affect ipv6 functionality in the new install.
+remoteaccess_hostname="zbm"
+remoteaccess_ip_config="dhcp" #"static" or "dhcp". Manual or automatic IP assignment for zfsbootmenu remote access.
+remoteaccess_ip="192.168.0.222" #Remote access IP address to connect to ZFSBootMenu. Not used for "dhcp" automatic IP configuration.
+remoteaccess_netmask="255.255.255.0" #Remote access subnet mask. Not used for "dhcp" automatic IP configuration.
 
 ##Check for root priviliges
 if [ "$(id -u)" -ne 0 ]; then
@@ -542,9 +546,26 @@ remote_zbm_access_Func(){
 		ssh-keygen -t rsa -m PEM -f /etc/dropbear/ssh_host_rsa_key -N ""
 		ssh-keygen -t ecdsa -m PEM -f /etc/dropbear/ssh_host_ecdsa_key -N ""
 		
+		##setup network	
 		mkdir -p /etc/cmdline.d
-		echo "ip=dhcp rd.neednet=1" > /etc/cmdline.d/dracut-network.conf ##Replace "dhcp" with specific IP if needed.
+
+		case "$remoteaccess_ip_config" in
+		dhcp)
+			echo "ip=dhcp rd.neednet=1" > /etc/cmdline.d/dracut-network.conf
+		;;
+
+		static)
+			echo "ip=$remoteaccess_ip:::$remoteaccess_netmask:::none rd.neednet=1 rd.break" > /etc/cmdline.d/dracut-network.conf
+		;;
+
+		*)
+			echo "Remote access IP option not recognised."
+			exit 1
+		;;
+		esac
 		
+		echo "send host-name \"$remoteaccess_hostname\";" >> /usr/lib/dracut/modules.d/35network-legacy/dhclient.conf
+
 		##add remote session welcome message
 		cat <<-EOF >/etc/zfsbootmenu/dracut.conf.d/banner.txt
 			Welcome to the ZFSBootMenu initramfs shell. Enter "zbm" to start ZFSBootMenu.
@@ -573,6 +594,8 @@ remote_zbm_access_Func(){
 			dropbear_ecdsa_key=/etc/dropbear/ssh_host_ecdsa_key
 			##Access by authorized keys only. No password.
 			##By default, the list of authorized keys is taken from /root/.ssh/authorized_keys on the host.
+			##You can add your remote user key using: "ssh-copy-id -i ~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}"
+			##Password access to the root account is disabled by default in "/etc/ssh/sshd_conf".
 			##Remember to "generate-zbm" after adding the remote user key to the authorized_keys file. 
 			##The last line is optional and assumes the specified user provides an authorized_keys file \
 			##that will determine remote access to the ZFSBootMenu image.
@@ -587,8 +610,9 @@ remote_zbm_access_Func(){
 		systemctl disable dropbear
 		
 		generate-zbm --debug
+
 	EOH
-	
+
 	case "$1" in
 	chroot)
 		cp /tmp/remote_zbm_access.sh "$mountpoint"/tmp
@@ -824,7 +848,7 @@ systemsetupFunc_part4(){
 
 	EOCHROOT
 	
-	if [ "$remoteaccess" = "yes" ];
+	if [ "${remoteaccess_first_boot}" = "yes" ];
 	then
 		remote_zbm_access_Func "chroot"
 	else true
@@ -973,7 +997,6 @@ systemsetupFunc_part6(){
 			
 			
 			
-
 			##Stop zed:
 			pkill -9 "zed*"
 
@@ -1120,9 +1143,10 @@ setupremoteaccess(){
 		touch /home/"$user"/.ssh/authorized_keys
 		chmod 644 /home/"$user"/.ssh/authorized_keys
 		chown "$user":"$user" /home/"$user"/.ssh/authorized_keys
-		hostname -I
-		echo "Remote access installed. Connect as root on port 222."
-		echo "Your SSH public key must be placed in \"/home/$user/.ssh/authorized_keys\" prior to reboot or remote access will not work."
+		#hostname -I
+		echo "Zfsbootmenu remote access installed. Connect as root on port 222 during boot: "ssh root@{IP_ADDRESS or FQDN of zfsbootmenu}" -p 222"
+		echo "Your SSH public key must be placed in "/home/$user/.ssh/authorized_keys" prior to reboot or remote access will not work."
+		echo "You can add your remote user key from the remote user's terminal using: "ssh-copy-id -i \~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}""
 		echo "Run \"generate-zbm\" after copying across the remote user's public ssh key into the authorized_keys file."
 	fi
 
