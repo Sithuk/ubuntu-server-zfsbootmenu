@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Scripts installs ubuntu server on encrypted zfs with headless remote unlocking and snapshot rollback at boot.
-##Script date: 2022-03-20
+##Script date: 2022-03-25
 
 set -euo pipefail
 #set -x
