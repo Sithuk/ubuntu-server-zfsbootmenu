@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Scripts installs ubuntu server on encrypted zfs with headless remote unlocking and snapshot rollback at boot.
-##Script date: 2022-03-25
+##Script date: 2022-03-27
 
 set -euo pipefail
 #set -x
@@ -40,27 +40,28 @@ set -euo pipefail
 ##zfs mount -a #Mount all datasets.
 
 ##Variables:
-ubuntuver="hirsute" #Ubuntu release to install. Only tested with hirsute (21.04).
+ubuntuver="impish" #Ubuntu release to install. "hirsute" (21.04). "impish" (21.10). "jammy" (22.04).
+distro_variant="server" #Ubuntu variant to install. "server" (Ubuntu server; cli only.) "desktop" (Default Ubuntu desktop install). "kubuntu" (KDE plasma desktop variant). "xubuntu" (Xfce desktop variant). "MATE" (MATE desktop variant).
 user="testuser" #Username for new install.
 PASSWORD="testuser" #Password for user in new install.
-hostname="ubuntu" #Name to identify the new install on the network. An underscore is DNS non-compliant.
+hostname="ubuntu" #Name to identify the main system on the network. An underscore is DNS non-compliant.
 zfspassword="testtest" #Password for root pool and data pool. Minimum 8 characters.
 locale="en_GB.UTF-8" #New install language setting.
 timezone="Europe/London" #New install timezone setting.
 zfs_rpool_ashift="12" #Drive setting for zfs pool. ashift=9 means 512B sectors (used by all ancient drives), ashift=12 means 4KiB sectors (used by most modern hard drives), and ashift=13 means 8KiB sectors (used by some modern SSDs).
 
 RPOOL="rpool" #Root pool name.
-topology_root="single" #single, mirror, raidz1, raidz2, or raidz3 topology on root pool.
+topology_root="single" #"single", "mirror", "raidz1", "raidz2", or "raidz3" topology on root pool.
 disks_root="1" #Number of disks in array for root pool. Not used with single topology.
 EFI_boot_size="512" #EFI boot loader partition size in mebibytes (MiB).
 swap_size="500" #Swap partition size in mebibytes (MiB). Size of swap will be larger than defined here with Raidz topologies.
 openssh="yes" #"yes" to install open-ssh server in new install.
 datapool="datapool" #Non-root drive data pool name.
-topology_data="single" #single, mirror, raidz1, raidz2, or raidz3 topology on data pool.
+topology_data="single" #"single", "mirror", "raidz1", "raidz2", or "raidz3" topology on data pool.
 disks_data="1" #Number of disks in array for data pool. Not used with single topology.
 datapoolmount="/mnt/$datapool" #Non-root drive data pool mount point in new install.
 zfs_dpool_ashift="12" #See notes for rpool ashift. If ashift is set too low, a significant read/write penalty is incurred. Virtually no penalty if set higher.
-zfs_compression="zstd" #lz4 is the zfs default; zstd may offer better compression at a cost of higher cpu usage.
+zfs_compression="zstd" #"lz4" is the zfs default; "zstd" may offer better compression at a cost of higher cpu usage.
 mountpoint="/mnt/ub_server" #Mountpoint in live iso.
 remoteaccess_first_boot="no" #"yes" to enable remoteaccess during first boot. Recommend leaving as "no" and run script with "remoteaccess". See notes in section above.
 timeout_rEFInd="5" #Timeout in seconds for rEFInd boot screen until default choice selected.
@@ -70,8 +71,8 @@ quiet_boot="yes" #Set to "no" to show boot sequence.
 ethprefix="e" #First letter of ethernet interface. Used to identify ethernet interface to setup networking in new install.
 install_log="ubuntu_setup_zfs_root.log" #Installation log filename.
 log_loc="/var/log" #Installation log location.
-ipv6_apt_fix_live_iso="no" #Try setting to "yes" if apt-get is slow in the ubuntu live iso. Doesn't affect ipv6 functionality in the new install.
-remoteaccess_hostname="zbm"
+ipv6_apt_fix_live_iso="no" #Try setting to "yes" gif apt-get is slow in the ubuntu live iso. Doesn't affect ipv6 functionality in the new install.
+remoteaccess_hostname="zbm" #Name to identify the zfsbootmenu system on the network.
 remoteaccess_ip_config="dhcp" #"static" or "dhcp". Manual or automatic IP assignment for zfsbootmenu remote access.
 remoteaccess_ip="192.168.0.222" #Remote access IP address to connect to ZFSBootMenu. Not used for "dhcp" automatic IP configuration.
 remoteaccess_netmask="255.255.255.0" #Remote access subnet mask. Not used for "dhcp" automatic IP configuration.
@@ -478,7 +479,6 @@ debootstrap_createzfspools_Func(){
 		zfs create	"$RPOOL"/usr/local					##locally compiled software
 		zfs create -o canmount=off "$RPOOL"/var 
 		zfs create -o canmount=off "$RPOOL"/var/lib
-		#zfs create 	"$RPOOL"/var/lib/AccountsService	##If this system will use GNOME desktop
 		zfs create	"$RPOOL"/var/games					##game files
 		zfs create	"$RPOOL"/var/log 					##log files
 		zfs create	"$RPOOL"/var/mail 					##local mails
@@ -1066,11 +1066,43 @@ distroinstall(){
 	#rm -f /etc/resolv.conf ##Gives an error during ubuntu-server install. "Same file as /run/systemd/resolve/stub-resolv.conf". https://bugs.launchpad.net/ubuntu/+source/systemd/+bug/1774632
 	#ln -s /run/systemd/resolve/resolv.conf /etc/resolv.conf
 	
-	apt install --yes ubuntu-server
-	
-	##7.2b Install a full GUI environment
-	#apt install --yes ubuntu-desktop
-	
+	if [ "$distro_variant" != "server" ];
+	then
+		zfs create 	"$RPOOL"/var/lib/AccountsService
+	fi
+
+	case "$distro_variant" in
+		server)	
+			##Server installation has a command line interface only.
+			##Minimal install: ubuntu-server-minimal
+			apt install --yes ubuntu-server
+		;;
+		desktop)
+			##Ubuntu default desktop install has a full GUI environment.
+			##Minimal install: ubuntu-desktop-minimal
+			apt install --yes ubuntu-desktop
+		;;
+		kubuntu)
+			##Ubuntu KDE plasma desktop install has a full GUI environment.
+			##Select sddm as display manager if asked during install.
+			apt install --yes kubuntu-desktop
+		;;
+		xubuntu)
+			##Ubuntu xfce desktop install has a full GUI environment.
+			##Select lightdm as display manager if asked during install.
+			apt install --yes xubuntu-desktop
+		;;
+		MATE)
+			##Ubuntu MATE desktop install has a full GUI environment.
+			##Select lightdm as display manager if asked during install.
+			apt install --yes ubuntu-mate-desktop
+		;;
+		*)
+			echo "Ubuntu variant variable not recognised. Check ubuntu variant variable."
+			exit 1
+		;;
+	esac
+
 	##additional programs
 	apt install --yes man-db tldr locate
 }
@@ -1327,7 +1359,7 @@ postreboot(){
 	dpkg-reconfigure keyboard-configuration && setupcon #Configure keyboard and console.
 	pyznapinstall #Snapshot management.
 	
-	echo "Install complete."
+	echo "Install complete: ${distro_variant}."
 }
 
 case "${1-default}" in
