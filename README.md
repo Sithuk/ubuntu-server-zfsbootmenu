@@ -1,12 +1,13 @@
-# Ubuntu server zfsbootmenu install script
+# Ubuntu zfsbootmenu install script
 
-This script creates an ubuntu server installation using the ZFS filesystem. The installation has integrated snapshot management using pyznap. Snapshots can be rolled back remotely at boot over ssh using zfsbootmenu. This is useful where there is no physical access to the machine.
+This script creates an Ubuntu installation using the ZFS filesystem. The installation has integrated snapshot management using pyznap. Snapshots can be rolled back remotely at boot over ssh using zfsbootmenu. This is useful where there is no physical access to the machine.
 
 Snapshots allow you to rollback your system to a previous state if there is a problem. The system automatically creates snapshots on a timer and also when the system is updated with apt. Snapshots are pruned over time to keep fewer older snapshots.
 
 Supports:
 - Ubuntu 21.04 or later.
-- Root filesystem on ZFS. 
+- Root filesystem on ZFS.
+- Choose from: Ubuntu Server, Ubuntu Desktop, Kubuntu, Xubuntu, and Ubuntu MATE.
 - Single, mirror, raidz1, raidz2, and raidz3 topologies.
 - Native ZFS encryption.
 - Remote unlocking of encrypted pools at boot over SSH.
@@ -18,8 +19,8 @@ Supports:
 Boot the system with an Ubuntu live desktop iso (ZFS 2.0 support needed for native encryption, so use Ubuntu 21.04 or later). Start the terminal (Ctrl+Alt+T) and enter the following.
 
 	git clone https://gitlab.com/Sithuk/ubuntu-server-zfsbootmenu.git ~/ubuntu-server-zfsbootmenu
-    cd ~/ubuntu-server-zfsbootmenu
-    chmod +x ubuntu_server_encrypted_root_zfs.sh
+    	cd ~/ubuntu-server-zfsbootmenu
+    	chmod +x ubuntu_server_encrypted_root_zfs.sh
 	
 Edit the variables in the ubuntu_server_encrypted_root_zfs.sh file to your preferences.
 
@@ -34,7 +35,7 @@ Reboot after the initial installation completes and login to the new install. Us
 	./ubuntu_server_encrypted_root_zfs.sh postreboot
 
 ## Optional: Remote access during boot
-The script includes an optional feature to provide remote access during boot. Remote access over ssh allows the system state to be rolled back to a previous snapshot. This is helpful to return a system to a bootable state following a failed upgrade.
+The script includes an optional feature to provide remote access during boot. Remote access over ssh allows the system state to be rolled back to a previous snapshot without physical access to the system. This is helpful to return a system to a bootable state following a failed upgrade.
 
 Run the following optional part of the script to enable remote access to zfsbootmenu during boot. Guidance on the use of zfsbootmenu can be found at its project website linked in the credits below.
 
