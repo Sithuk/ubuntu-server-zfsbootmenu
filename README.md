@@ -19,8 +19,8 @@ Supports:
 Boot the system with an Ubuntu live desktop iso (ZFS 2.0 support needed for native encryption, so use Ubuntu 21.04 or later). Start the terminal (Ctrl+Alt+T) and enter the following.
 
 	git clone https://gitlab.com/Sithuk/ubuntu-server-zfsbootmenu.git ~/ubuntu-server-zfsbootmenu
-    	cd ~/ubuntu-server-zfsbootmenu
-    	chmod +x ubuntu_server_encrypted_root_zfs.sh
+    cd ~/ubuntu-server-zfsbootmenu
+    chmod +x ubuntu_server_encrypted_root_zfs.sh
 	
 Edit the variables in the ubuntu_server_encrypted_root_zfs.sh file to your preferences.
 
