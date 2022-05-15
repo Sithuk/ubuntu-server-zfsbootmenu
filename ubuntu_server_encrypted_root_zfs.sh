@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Scripts installs ubuntu server on encrypted zfs with headless remote unlocking and snapshot rollback at boot.
-##Script date: 2022-03-27
+##Script date: 2022-05-15
 
 set -euo pipefail
 #set -x
@@ -40,7 +40,7 @@ set -euo pipefail
 ##zfs mount -a #Mount all datasets.
 
 ##Variables:
-ubuntuver="impish" #Ubuntu release to install. "hirsute" (21.04). "impish" (21.10). "jammy" (22.04).
+ubuntuver="jammy" #Ubuntu release to install. "hirsute" (21.04). "impish" (21.10). "jammy" (22.04).
 distro_variant="server" #Ubuntu variant to install. "server" (Ubuntu server; cli only.) "desktop" (Default Ubuntu desktop install). "kubuntu" (KDE plasma desktop variant). "xubuntu" (Xfce desktop variant). "MATE" (MATE desktop variant).
 user="testuser" #Username for new install.
 PASSWORD="testuser" #Password for user in new install.
@@ -1126,14 +1126,14 @@ pyznapinstall(){
 		pip3 install virtualenv
 		virtualenv --version
 		pip3 install virtualenvwrapper
-		mkdir /root/pyznap
-		cd /root/pyznap
+		mkdir /opt/pyznap
+		cd /opt/pyznap
 		virtualenv venv
 		source venv/bin/activate ##enter virtual env
 		pip install pyznap
 		deactivate ##exit virtual env
-		ln -s /root/pyznap/venv/bin/pyznap /usr/local/bin/pyznap
-		/root/pyznap/venv/bin/pyznap setup ##config file created /etc/pyznap/pyznap.conf
+		ln -s /opt/pyznap/venv/bin/pyznap /usr/local/bin/pyznap
+		/opt/pyznap/venv/bin/pyznap setup ##config file created /etc/pyznap/pyznap.conf
 		chown root:root -R /etc/pyznap/
 		##update config
 		cat >> /etc/pyznap/pyznap.conf <<-EOF
@@ -1151,7 +1151,7 @@ pyznapinstall(){
 		cat > /etc/cron.d/pyznap <<-EOF
 			SHELL=/bin/sh
 			PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-			*/15 * * * *   root    /root/pyznap/venv/bin/pyznap snap >> /var/log/pyznap.log 2>&1
+			*/15 * * * *   root    /opt/pyznap/venv/bin/pyznap snap >> /var/log/pyznap.log 2>&1
 		EOF
 
 		##integrate with apt
