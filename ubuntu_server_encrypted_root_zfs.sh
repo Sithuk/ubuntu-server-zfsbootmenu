@@ -41,7 +41,7 @@ set -euo pipefail
 
 ##Variables:
 ubuntuver="jammy" #Ubuntu release to install. "hirsute" (21.04). "impish" (21.10). "jammy" (22.04).
-distro_variant="server" #Ubuntu variant to install. "server" (Ubuntu server; cli only.) "desktop" (Default Ubuntu desktop install). "kubuntu" (KDE plasma desktop variant). "xubuntu" (Xfce desktop variant). "MATE" (MATE desktop variant).
+distro_variant="server" #Ubuntu variant to install. "server" (Ubuntu server; cli only.) "desktop" (Default Ubuntu desktop install). "kubuntu" (KDE plasma desktop variant). "xubuntu" (Xfce desktop variant). "budgie" (Budgie desktop variant). "MATE" (MATE desktop variant).
 user="testuser" #Username for new install.
 PASSWORD="testuser" #Password for user in new install.
 hostname="ubuntu" #Name to identify the main system on the network. An underscore is DNS non-compliant.
