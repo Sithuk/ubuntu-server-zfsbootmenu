@@ -1092,6 +1092,11 @@ distroinstall(){
 			##Select lightdm as display manager if asked during install.
 			apt install --yes xubuntu-desktop
 		;;
+		budgie)
+			##Ubuntu budgie desktop install has a full GUI environment.
+			##Select lightdm as display manager if asked during install.
+			apt install --yes ubuntu-budgie-desktop
+		;;
 		MATE)
 			##Ubuntu MATE desktop install has a full GUI environment.
 			##Select lightdm as display manager if asked during install.
