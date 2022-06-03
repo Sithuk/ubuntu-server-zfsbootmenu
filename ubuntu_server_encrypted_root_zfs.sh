@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Scripts installs ubuntu server on encrypted zfs with headless remote unlocking and snapshot rollback at boot.
-##Script date: 2022-05-27
+##Script date: 2022-06-03
 
 set -euo pipefail
 #set -x
@@ -40,12 +40,12 @@ set -euo pipefail
 ##zfs mount -a #Mount all datasets.
 
 ##Variables:
-ubuntuver="jammy" #Ubuntu release to install. "hirsute" (21.04). "impish" (21.10). "jammy" (22.04).
+ubuntuver="jammy" #Ubuntu release to install. "jammy" (22.04).
 distro_variant="server" #Ubuntu variant to install. "server" (Ubuntu server; cli only.) "desktop" (Default Ubuntu desktop install). "kubuntu" (KDE plasma desktop variant). "xubuntu" (Xfce desktop variant). "budgie" (Budgie desktop variant). "MATE" (MATE desktop variant).
 user="testuser" #Username for new install.
 PASSWORD="testuser" #Password for user in new install.
 hostname="ubuntu" #Name to identify the main system on the network. An underscore is DNS non-compliant.
-zfspassword="testtest" #Password for root pool and data pool. Minimum 8 characters.
+zfs_root_password="testtest" #Password for root pool. Minimum 8 characters. "" for no password protection. Unlocking root pool also unlocks data pool, unless the root pool has no password protection, then a separate data pool password can be set below.
 locale="en_GB.UTF-8" #New install language setting.
 timezone="Europe/London" #New install timezone setting.
 zfs_rpool_ashift="12" #Drive setting for zfs pool. ashift=9 means 512B sectors (used by all ancient drives), ashift=12 means 4KiB sectors (used by most modern hard drives), and ashift=13 means 8KiB sectors (used by some modern SSDs).
@@ -59,6 +59,7 @@ openssh="yes" #"yes" to install open-ssh server in new install.
 datapool="datapool" #Non-root drive data pool name.
 topology_data="single" #"single", "mirror", "raidz1", "raidz2", or "raidz3" topology on data pool.
 disks_data="1" #Number of disks in array for data pool. Not used with single topology.
+zfs_data_password="" #If no root pool password is set, a data pool password can be set here. Minimum 8 characters. "" for no password protection.
 datapoolmount="/mnt/$datapool" #Non-root drive data pool mount point in new install.
 zfs_dpool_ashift="12" #See notes for rpool ashift. If ashift is set too low, a significant read/write penalty is incurred. Virtually no penalty if set higher.
 zfs_compression="zstd" #"lz4" is the zfs default; "zstd" may offer better compression at a cost of higher cpu usage.
@@ -380,25 +381,31 @@ debootstrap_part1_Func(){
 
 debootstrap_createzfspools_Func(){
 
-	zpool_encrypted_Func(){
-		##2.8b create root pool encrypted
-		echo Password must be min 8 characters.
+	create_rpool_Func(){
+		##2.8 create root pool
 		
 		zpool_create_temp="/tmp/${RPOOL}_creation.sh"
 		cat > "$zpool_create_temp" <<-EOF
-			zpool create -f \
-				-o ashift=$zfs_rpool_ashift \
-				-o autotrim=on \
-				-O acltype=posixacl \
-				-O canmount=off \
-				-O compression=$zfs_compression \
-				-O dnodesize=auto \
-				-O normalization=formD \
-				-O relatime=on \
-				-O xattr=sa \
-				-O encryption=aes-256-gcm -O keylocation=prompt -O keyformat=passphrase \
-				-O mountpoint=/ -R "$mountpoint" \\
+			zpool create -f \\
+				-o ashift=$zfs_rpool_ashift \\
+				-o autotrim=on \\
+				-O acltype=posixacl \\
+				-O canmount=off \\
+				-O compression=$zfs_compression \\
+				-O dnodesize=auto \\
+				-O normalization=formD \\
+				-O relatime=on \\
+				-O xattr=sa \\
 		EOF
+	
+		if [ -n "$zfs_root_password" ];
+		then
+			echo "-O encryption=aes-256-gcm -O keylocation=prompt -O keyformat=passphrase \\" >> "$zpool_create_temp"
+		else
+			true
+		fi	
+		
+		echo "-O mountpoint=/ -R $mountpoint \\" >> "$zpool_create_temp"
 
 		add_zpool_disks(){
 			while IFS= read -r diskidnum;
@@ -406,7 +413,7 @@ debootstrap_createzfspools_Func(){
 				echo "/dev/disk/by-id/${diskidnum}-part3 \\" >> "$zpool_create_temp"
 			done < /tmp/diskid_check_root.txt
 		
-			sed -i '$s,\\,,' "$zpool_create_temp"
+			sed -i '$s,\\,,' "$zpool_create_temp" ##Remove escape character at end of file.
 		}
 
 
@@ -444,8 +451,8 @@ debootstrap_createzfspools_Func(){
 		esac
 		
 	}
-	zpool_encrypted_Func
-	echo -e "$zfspassword" | sh "$zpool_create_temp" 
+	create_rpool_Func
+	echo -e "$zfs_root_password" | sh "$zpool_create_temp" 
 	
 	##3. System installation
 	mountpointsFunc(){
@@ -768,10 +775,15 @@ systemsetupFunc_part4(){
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		zfsbootmenuinstall(){
 
-			##convert rpool to use keyfile
-			echo $zfspassword > /etc/zfs/$RPOOL.key ##This file will live inside your initramfs stored ON the ZFS boot environment.
-			chmod 600 /etc/zfs/$RPOOL.key
-			zfs change-key -o keylocation=file:///etc/zfs/$RPOOL.key -o keyformat=passphrase $RPOOL
+			if [ -n "$zfs_root_password" ];
+			then
+				##convert rpool to use keyfile
+				echo $zfs_root_password > /etc/zfs/$RPOOL.key ##This file will live inside your initramfs stored on the ZFS boot environment.
+				chmod 600 /etc/zfs/$RPOOL.key
+				zfs change-key -o keylocation=file:///etc/zfs/$RPOOL.key -o keyformat=passphrase $RPOOL
+			else
+				true
+			fi	
 							
 			if [ "$quiet_boot" = "yes" ]; then
 				zfs set org.zfsbootmenu:commandline="spl_hostid=\$( hostid ) ro quiet" "$RPOOL"/ROOT
@@ -823,6 +835,7 @@ systemsetupFunc_part4(){
 				##Install zfsbootmenu dependencies
 				apt install --yes libconfig-inifiles-perl libsort-versions-perl libboolean-perl fzf mbuffer
 				cpan 'YAML::PP'
+				rm -rf /root/.cpan/build ##Delete temp installation files.				
 
 				update-initramfs -k all -c
 				
@@ -980,7 +993,7 @@ systemsetupFunc_part6(){
 			
 			
 			touch /etc/zfs/zfs-list.cache/$RPOOL
-			ln -s /usr/lib/zfs-linux/zed.d/history_event-zfs-list-cacher.sh /etc/zfs/zed.d
+			#ln -s /usr/lib/zfs-linux/zed.d/history_event-zfs-list-cacher.sh /etc/zfs/zed.d
 			zed -F &
 			sleep 2
 			
@@ -1181,9 +1194,9 @@ setupremoteaccess(){
 		chmod 644 /home/"$user"/.ssh/authorized_keys
 		chown "$user":"$user" /home/"$user"/.ssh/authorized_keys
 		#hostname -I
-		echo "Zfsbootmenu remote access installed. Connect as root on port 222 during boot: "ssh root@{IP_ADDRESS or FQDN of zfsbootmenu}" -p 222"
-		echo "Your SSH public key must be placed in "/home/$user/.ssh/authorized_keys" prior to reboot or remote access will not work."
-		echo "You can add your remote user key from the remote user's terminal using: "ssh-copy-id -i \~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}""
+		echo "Zfsbootmenu remote access installed. Connect as root on port 222 during boot: \"ssh root@{IP_ADDRESS or FQDN of zfsbootmenu} -p 222\""
+		echo "Your SSH public key must be placed in \"/home/$user/.ssh/authorized_keys\" prior to reboot or remote access will not work."
+		echo "You can add your remote user key from the remote user's terminal using: \"ssh-copy-id -i ~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}\""
 		echo "Run \"generate-zbm\" after copying across the remote user's public ssh key into the authorized_keys file."
 	fi
 
@@ -1219,9 +1232,6 @@ createdatapool(){
 	##automount with zfs-mount-generator
 	touch /etc/zfs/zfs-list.cache/"$datapool"
 
-	##Set data pool key to use rpool key for single unlock at boot. So data pool uses the same password as the root pool.
-	datapool_keyloc="/etc/zfs/$RPOOL.key"
-
 	##Create data pool
 	create_dpool_Func(){
 		echo "$datapoolmount"
@@ -1229,18 +1239,31 @@ createdatapool(){
 		zpool_create_temp="/tmp/${datapool}_creation.sh"
 		cat > "$zpool_create_temp" <<-EOF
 			zpool create \
-				-o ashift="$zfs_dpool_ashift" \
-				-O acltype=posixacl \
-				-O compression="$zfs_compression" \
-				-O normalization=formD \
-				-O relatime=on \
-				-O dnodesize=auto \
-				-O xattr=sa \
-				-O encryption=aes-256-gcm \
-				-O keylocation=file://"$datapool_keyloc" \
-				-O keyformat=passphrase \
-				-O mountpoint="$datapoolmount" \\
+				-o ashift="$zfs_dpool_ashift" \\
+				-O acltype=posixacl \\
+				-O compression="$zfs_compression" \\
+				-O normalization=formD \\
+				-O relatime=on \\
+				-O dnodesize=auto \\
+				-O xattr=sa \\
 		EOF
+
+		if [ -n "$zfs_root_password" ];
+		then
+			##Set data pool key to use rpool key for single unlock at boot. So data pool uses the same password as the root pool.
+			datapool_keyloc="/etc/zfs/$RPOOL.key"
+			echo "-O encryption=aes-256-gcm -O keylocation=file://$datapool_keyloc -O keyformat=passphrase \\" >> "$zpool_create_temp"
+		else
+			if [ -n "$zfs_data_password" ];
+			then
+				echo "-O encryption=aes-256-gcm -O keylocation=prompt -O keyformat=passphrase \\" >> "$zpool_create_temp"
+			else
+				true
+			fi
+		fi	
+		
+		echo "-O mountpoint=$datapoolmount \\" >> "$zpool_create_temp"
+
 
 		add_zpool_disks(){
 			while IFS= read -r diskidnum;
@@ -1248,7 +1271,7 @@ createdatapool(){
 				echo "/dev/disk/by-id/${diskidnum} \\" >> "$zpool_create_temp"
 			done < /tmp/diskid_check_data.txt
 		
-			sed -i '$s,\\,,' "$zpool_create_temp" ##Remove escape characters needed for last line of EOF code block.
+			sed -i '$s,\\,,' "$zpool_create_temp" ##Remove escape character at end of file.
 		}
 
 
@@ -1287,7 +1310,7 @@ createdatapool(){
 	
 	}
 	create_dpool_Func
-	sh "$zpool_create_temp" 
+	echo -e "$zfs_data_password" | sh "$zpool_create_temp" 
 	
 	##Verify that zed updated the cache by making sure the cache file is not empty.
 	cat /etc/zfs/zfs-list.cache/"$datapool"
