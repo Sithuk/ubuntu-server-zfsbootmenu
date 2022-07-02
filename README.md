@@ -5,7 +5,7 @@ This script creates an Ubuntu installation using the ZFS filesystem. The install
 Snapshots allow you to rollback your system to a previous state if there is a problem. The system automatically creates snapshots on a timer and also when the system is updated with apt. Snapshots are pruned over time to keep fewer older snapshots.
 
 Supports:
-- Ubuntu 21.04 or later.
+- Ubuntu 22.04.
 - Root filesystem on ZFS.
 - Choose from: Ubuntu Server, Ubuntu Desktop, Kubuntu, Xubuntu, Budgie, and Ubuntu MATE.
 - Single, mirror, raidz1, raidz2, and raidz3 topologies.
