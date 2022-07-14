@@ -1275,7 +1275,7 @@ createdatapool(){
 		}
 
 
-		case "$topology_root" in
+		case "$topology_data" in
 			single)
 				echo "$datapool \\" >> "$zpool_create_temp"	
 				add_zpool_disks
