@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Scripts installs ubuntu server on encrypted zfs with headless remote unlocking and snapshot rollback at boot.
-##Script date: 2022-06-03
+##Script date: 2022-07-31
 
 set -euo pipefail
 #set -x
@@ -907,6 +907,11 @@ systemsetupFunc_part5(){
 			echo /dev/mapper/swap none swap defaults 0 0 >> /etc/fstab
 		EOF
 		
+		##Update mdadm configuration file
+		cat >> "$multi_disc_swap_loc" <<-EOF
+			mdadm --detail --scan --verbose | tee -a /etc/mdadm/mdadm.conf
+		EOF
+
 		##Check MDADM status.
 		cat >> "$multi_disc_swap_loc" <<-EOF
 			cat /proc/mdstat
