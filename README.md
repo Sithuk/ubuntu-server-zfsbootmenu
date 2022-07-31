@@ -53,7 +53,7 @@ Additional guidance and notes can be found in the script.
 https://www.reddit.com/r/zfs/comments/mj4nfa/ubuntu_server_2104_native_encrypted_root_on_zfs/
 
 ## Credits
-rlaager (https://openzfs.github.io/openzfs-docs/Getting%20Started/Ubuntu/Ubuntu%2020.04%20Root%20on%20ZFS.html)
+rlaager (https://openzfs.github.io/openzfs-docs/Getting%20Started/Ubuntu/Ubuntu%2022.04%20Root%20on%20ZFS.html)
 
 ahesford E39M5S62/zdykstra (https://github.com/zbm-dev/zfsbootmenu)
 
