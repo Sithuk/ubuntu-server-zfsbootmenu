@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Scripts installs ubuntu server on encrypted zfs with headless remote unlocking and snapshot rollback at boot.
-##Script date: 2022-07-31
+##Script date: 2022-08-20
 
 set -euo pipefail
 #set -x
@@ -657,13 +657,12 @@ systemsetupFunc_part1(){
 		    $ethernetinterface:
 		      dhcp4: yes
 	EOF
-	
-	
+
+
 	##4.4 bind virtual filesystems from LiveCD to new system
 	mount --rbind /dev  "$mountpoint"/dev
 	mount --rbind /proc "$mountpoint"/proc
 	mount --rbind /sys  "$mountpoint"/sys 
-
 	
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		##4.3 configure package sources
@@ -707,7 +706,9 @@ systemsetupFunc_part2(){
 		
 		apt install -yq software-properties-common
 		
-		DEBIAN_FRONTEND=noninteractive apt-get -yq install zfs-dkms
+		##Ubuntu kernels come with zfs module installed. No need to install zfs-dkms for zfs version in the default repositories.
+		#DEBIAN_FRONTEND=noninteractive apt-get -yq install zfs-dkms
+		
 		apt install --yes zfsutils-linux zfs-zed
 
 		apt install --yes zfs-initramfs
@@ -1125,6 +1126,15 @@ distroinstall(){
 			exit 1
 		;;
 	esac
+
+	##Update netplan config to use NetworkManager if installed. Otherwise will default to networkd.
+	if [ "$(dpkg-query --show --showformat='${db:Status-Status}\n' "network-manager")" = "installed" ];
+	then
+		ethernetinterface="$(basename "$(find /sys/class/net -maxdepth 1 -mindepth 1 -name "${ethprefix}*")")"
+		sed -i '/^  version:.*/a\ \ renderer: NetworkManager' /etc/netplan/01-"$ethernetinterface".yaml
+		netplan apply
+	else true
+	fi
 
 	##additional programs
 	apt install --yes man-db tldr locate
