@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Scripts installs ubuntu server on encrypted zfs with headless remote unlocking and snapshot rollback at boot.
-##Script date: 2022-08-20
+##Script date: 2022-08-28
 
 set -euo pipefail
 #set -x
@@ -1131,8 +1131,15 @@ distroinstall(){
 	if [ "$(dpkg-query --show --showformat='${db:Status-Status}\n' "network-manager")" = "installed" ];
 	then
 		ethernetinterface="$(basename "$(find /sys/class/net -maxdepth 1 -mindepth 1 -name "${ethprefix}*")")"
-		sed -i '/^  version:.*/a\ \ renderer: NetworkManager' /etc/netplan/01-"$ethernetinterface".yaml
+		rm /etc/netplan/01-"$ethernetinterface".yaml
+		cat > /etc/netplan/01-network-manager-all.yaml <<-EOF
+			#Let NetworkManager manage all devices on this system.
+			network:
+			  version: 2
+			  renderer: NetworkManager
+		EOF
 		netplan apply
+		dhclient -v
 	else true
 	fi
 
