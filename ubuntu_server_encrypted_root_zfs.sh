@@ -150,6 +150,18 @@ disclaimer(){
 	read -r _
 }
 
+connectivity_check(){
+	##https://unix.stackexchange.com/a/190610
+	test_site=google.com
+	if nc -zw1 "${test_site}" 443
+	then
+		echo "Internet connectivity test passed."
+	else
+		echo "No internet connectivity available. Please check connectivity."
+		exit 1
+	fi
+}
+
 getdiskID(){
 	pool="$1"
 	diskidnum="$2"
@@ -1413,6 +1425,7 @@ initialinstall(){
 
 postreboot(){
 	disclaimer
+	connectivity_check #Check for internet connectivity.
 	usersetup #Create user account and setup groups.
 	distroinstall #Upgrade the minimal system to the selected distro.
 	NetworkManager_config #Adjust networking config for NetworkManager, if installed by distro.
