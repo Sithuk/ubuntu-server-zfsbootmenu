@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Scripts installs ubuntu server on encrypted zfs with headless remote unlocking and snapshot rollback at boot.
-##Script date: 2022-08-28
+##Script date: 2022-08-29
 
 set -euo pipefail
 #set -x
@@ -1126,10 +1126,13 @@ distroinstall(){
 			exit 1
 		;;
 	esac
+}
 
+NetworkManager_config(){
 	##Update netplan config to use NetworkManager if installed. Otherwise will default to networkd.
 	if [ "$(dpkg-query --show --showformat='${db:Status-Status}\n' "network-manager")" = "installed" ];
 	then
+		##Update netplan configuration for NetworkManager.
 		ethernetinterface="$(basename "$(find /sys/class/net -maxdepth 1 -mindepth 1 -name "${ethprefix}*")")"
 		rm /etc/netplan/01-"$ethernetinterface".yaml
 		cat > /etc/netplan/01-network-manager-all.yaml <<-EOF
@@ -1138,11 +1141,18 @@ distroinstall(){
 			  version: 2
 			  renderer: NetworkManager
 		EOF
+		
+		##Disable systemd-networkd to prevent conflicts with NetworkManager.
+		systemctl stop systemd-networkd
+		systemctl disable systemd-networkd
+		#systemctl mask systemd-networkd
+		
 		netplan apply
-		dhclient -v
 	else true
 	fi
+}
 
+extra_programs(){
 	##additional programs
 	apt install --yes man-db tldr locate
 }
@@ -1404,7 +1414,9 @@ initialinstall(){
 postreboot(){
 	disclaimer
 	usersetup #Create user account and setup groups.
-	distroinstall #Upgrade the minimal system.
+	distroinstall #Upgrade the minimal system to the selected distro.
+	NetworkManager_config #Adjust networking config for NetworkManager, if installed by distro.
+	extra_programs #Install extra programs.
 	logcompress #Disable log compression.
 	dpkg-reconfigure keyboard-configuration && setupcon #Configure keyboard and console.
 	pyznapinstall #Snapshot management.
