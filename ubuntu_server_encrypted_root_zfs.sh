@@ -1,6 +1,6 @@
 #!/bin/bash
-##Scripts installs ubuntu server on encrypted zfs with headless remote unlocking and snapshot rollback at boot.
-##Script date: 2022-08-29
+##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
+##Script date: 2022-10-08
 
 set -euo pipefail
 #set -x
@@ -583,7 +583,7 @@ remote_zbm_access_Func(){
 		;;
 		esac
 		
-		echo "send host-name \"$remoteaccess_hostname\";" >> /usr/lib/dracut/modules.d/35network-legacy/dhclient.conf
+		echo "send fqdn.fqdn \"$remoteaccess_hostname\";" >> /usr/lib/dracut/modules.d/35network-legacy/dhclient.conf
 
 		##add remote session welcome message
 		cat <<-EOF >/etc/zfsbootmenu/dracut.conf.d/banner.txt
