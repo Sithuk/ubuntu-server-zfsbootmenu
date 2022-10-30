@@ -48,6 +48,26 @@ The script includes an optional feature to create an encrypted zfs data pool on 
 
 ## FAQ
 Additional guidance and notes can be found in the script.
+1. How do I rollback the system using a snapshot in zfsbootmenu?    
+   You can rollback to a snapshot by doing the following, for example if an upgrade does not work and you wish to revert to a previous state. I recommend testing any changes out in a virtual machine first before rolling them out in a production environment.
+   - Reboot and enter zfsbootmenu
+   - Select the boot environment and press Ctrl+S to show the snapshots.
+   - Select the pre-upgrade snapshot and choose one of the following options. Either option will provide the ability to boot into the system as it was pre-upgrade.
+     - Press Enter to create a duplicate. Zfsbootmenu will create a duplicate boot environment from the snapshot that is entirely independent of the upgraded boot environment and its snapshots. The down sides of a duplicate are that:
+       - it requires sufficient disk space to create the duplicate; and
+       - snapshots linked to the previous boot environment will not be duplicated.
+     - Press Ctrl+X to "clone and promote". Zfsbootmenu will create a new boot environment from the snapshot that will have all the snapshot history and consume little additional space. The zfsbootmenu authors recommend the "clone and promote" option to rollback.
+     
+     Zfsbootmenu does not provide any tools to delete an unused boot environment. You can use zectl if you would like to do that. You will need to compile and install it as I don't think it is available in any ppas.
+     https://github.com/johnramsden/zectl
+
+2. Can I upgrade the system normally using do-release-upgrade?
+   - Zfsbootmenu
+   
+     It is possible that upgrading ubuntu will cause a newer zfs version to be installed that is unsupported by zfsbootmenu. The system may not be able to boot if the zfs root pool is upgraded beyond what is supported by zfsbootmenu. Create a test system in a virtual machine first to duplicate your setup and test the upgrade process.
+   - Pyznap
+   
+     Pyznap is not included as a package in the ubuntu repos at present. It may need to be re-compiled and re-installed. You can reference the install script for the relevant code to re-compile and re-install. 
 
 ## Reddit discussion thread
 https://www.reddit.com/r/zfs/comments/mj4nfa/ubuntu_server_2104_native_encrypted_root_on_zfs/
