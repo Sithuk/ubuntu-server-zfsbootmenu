@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
-##Script date: 2022-10-08
+##Script date: 2022-11-01
 
 set -euo pipefail
 #set -x
