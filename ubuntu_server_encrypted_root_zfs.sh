@@ -74,8 +74,8 @@ install_log="ubuntu_setup_zfs_root.log" #Installation log filename.
 log_loc="/var/log" #Installation log location.
 ipv6_apt_fix_live_iso="no" #Try setting to "yes" gif apt-get is slow in the ubuntu live iso. Doesn't affect ipv6 functionality in the new install.
 remoteaccess_hostname="zbm" #Name to identify the zfsbootmenu system on the network.
-remoteaccess_ip_config="dhcp" #"static" or "dhcp". Manual or automatic IP assignment for zfsbootmenu remote access.
-remoteaccess_ip="192.168.0.222" #Remote access IP address to connect to ZFSBootMenu. Not used for "dhcp" automatic IP configuration.
+remoteaccess_ip_config="dhcp" #"dhcp", "dhcp,dhcp6", "dhcp6", or "static". Automatic (dhcp) or static IP assignment for zfsbootmenu remote access.
+remoteaccess_ip="192.168.0.222" #Remote access static IP address to connect to ZFSBootMenu. Not used for automatic IP configuration.
 remoteaccess_netmask="255.255.255.0" #Remote access subnet mask. Not used for "dhcp" automatic IP configuration.
 
 ##Check for root priviliges
@@ -567,16 +567,20 @@ remote_zbm_access_Func(){
 		
 		##setup network	
 		mkdir -p /etc/cmdline.d
+		
+		remoteaccess_dhcp_ver(){
+			dhcpver="\$1"
+			echo "ip=\${dhcpver:-default} rd.neednet=1" > /etc/cmdline.d/dracut-network.conf
+		}
 
+		##Dracut network options: https://github.com/dracutdevs/dracut/blob/master/modules.d/35network-legacy/ifup.sh
 		case "$remoteaccess_ip_config" in
-		dhcp)
-			echo "ip=dhcp rd.neednet=1" > /etc/cmdline.d/dracut-network.conf
+		dhcp | dhcp,dhcp6 | dhcp6)
+			remoteaccess_dhcp_ver "$remoteaccess_ip_config"
 		;;
-
 		static)
 			echo "ip=$remoteaccess_ip:::$remoteaccess_netmask:::none rd.neednet=1 rd.break" > /etc/cmdline.d/dracut-network.conf
 		;;
-
 		*)
 			echo "Remote access IP option not recognised."
 			exit 1
@@ -768,7 +772,6 @@ systemsetupFunc_part3(){
 
 
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		
 		DEBIAN_FRONTEND=noninteractive apt-get -yq install refind kexec-tools
 		apt install --yes dpkg-dev git systemd-sysv
 		
@@ -777,9 +780,6 @@ systemsetupFunc_part3(){
 
 		echo REMAKE_INITRD=yes > /etc/dkms/zfs.conf
 		sed -i 's,LOAD_KEXEC=false,LOAD_KEXEC=true,' /etc/default/kexec
-
-		apt install -y dracut-core ##core dracut components only for zbm initramfs 
-
 	EOCHROOT
 
 }
@@ -806,56 +806,61 @@ systemsetupFunc_part4(){
 
 			##install zfsbootmenu
 			compile_zbm_git(){
+				##https://github.com/zbm-dev/zfsbootmenu/blob/master/testing/helpers/chroot-ubuntu.sh
+				##Prevent interactive prompts
+				export DEBIAN_FRONTEND=noninteractive
+				export DEBCONF_NONINTERACTIVE_SEEN=true
+				
+				##bsdextrautils contains column utility used in zfsbootmenu UI.
+				apt-get install --yes bsdextrautils
+				
+				##Install optional mbuffer package.
+				##https://github.com/zbm-dev/zfsbootmenu/blob/master/zfsbootmenu/install-helpers.sh
+				apt-get install --yes mbuffer
+				
+				##Install packages needed for zfsbootmenu
+				apt-get install --yes --no-install-recommends git dracut-core fzf kexec-tools cpanminus gcc make
+				
+				##Remove temporary directory if already present
+				if [ -d /tmp/zfsbootmenu ];
+				then
+					rm -rf /tmp/zfsbootmenu
+				fi
+				
 				apt install -y git make
 				cd /tmp
 				git clone 'https://github.com/zbm-dev/zfsbootmenu.git'
 				cd zfsbootmenu
-				make install
+				make core dracut ##"make install" installs mkinitcpio, not needed.
+				
+				##Install perl dependencies
+				cpanm --notest --installdeps .
+				
 			}
 			compile_zbm_git
 				
 			##configure zfsbootmenu
 			config_zbm(){
-				cat <<-EOF > /etc/zfsbootmenu/config.yaml
-					Global:
-					  ManageImages: true
-					  BootMountPoint: /boot/efi
-					  DracutConfDir: /etc/zfsbootmenu/dracut.conf.d
-					Components:
-					  ImageDir: /boot/efi/EFI/ubuntu
-					  Versions: false
-					  Enabled: true
-					  syslinux:
-					    Config: /boot/syslinux/syslinux.cfg
-					    Enabled: false
-					EFI:
-					  ImageDir: /boot/efi/EFI/ubuntu
-					  Versions: false
-					  Enabled: false
-					Kernel:
-					  CommandLine: ro quiet loglevel=0
-				EOF
+				##https://github.com/zbm-dev/zfsbootmenu/blob/master/testing/helpers/configure-ubuntu.sh
+				##Update configuration file
+				sed \\
+				-e 's,ManageImages:.*,ManageImages: true,' \\
+				-e 's@ImageDir:.*@ImageDir: /boot/efi/EFI/ubuntu@' \\
+				-e 's,Versions:.*,Versions: false,' \\
+				-i /etc/zfsbootmenu/config.yaml
 			
-                		if [ "$quiet_boot" = "no" ]; then
-                    			sed -i 's,ro quiet,ro,' /etc/zfsbootmenu/config.yaml
-                		fi
-
-				##Omit systemd dracut modules to prevent ZBM boot breaking
-				cat <<-EOF >> /etc/zfsbootmenu/dracut.conf.d/zfsbootmenu.conf
-					omit_dracutmodules+=" systemd systemd-initrd dracut-systemd "
-				EOF
-			
-				##Install zfsbootmenu dependencies
-				apt install --yes libconfig-inifiles-perl libsort-versions-perl libboolean-perl fzf mbuffer
-				cpan 'YAML::PP'
-				rm -rf /root/.cpan/build ##Delete temp installation files.				
-
-				update-initramfs -k all -c
+				if [ "$quiet_boot" = "no" ]; then
+					sed -i 's,ro quiet,ro,' /etc/zfsbootmenu/config.yaml
+				fi
 				
-				##Generate ZFSBootMenu
-				generate-zbm
+			}
+			config_zbm
 				
-				##Update refind_linux.conf
+			update-initramfs -c -k all
+			generate-zbm --debug
+				
+			##Update refind_linux.conf
+			config_refind(){
 				##zfsbootmenu command-line parameters:
 				##https://github.com/zbm-dev/zfsbootmenu/blob/master/pod/zfsbootmenu.7.pod
 				cat <<-EOF > /boot/efi/EFI/ubuntu/refind_linux.conf
@@ -864,11 +869,11 @@ systemsetupFunc_part4(){
 				EOF
 				
 				if [ "$quiet_boot" = "no" ]; then
-                    			sed -i 's,ro quiet,ro,' /boot/efi/EFI/ubuntu/refind_linux.conf
-                		fi
-
+					sed -i 's,ro quiet,ro,' /boot/efi/EFI/ubuntu/refind_linux.conf
+				fi
 			}
-			config_zbm	
+			config_refind
+			
 		}
 		zfsbootmenuinstall
 
@@ -885,7 +890,7 @@ systemsetupFunc_part4(){
 systemsetupFunc_part5(){
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		##4.11 set root password
-		echo -e "root:$PASSWORD" | chpasswd
+		echo -e "root:$PASSWORD" | chpasswd -c SHA256
 	EOCHROOT
 	
 	##4.12 configure swap
@@ -1004,11 +1009,8 @@ systemsetupFunc_part6(){
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		##5.8 Fix filesystem mount ordering
 		
-
-		
 		fixfsmountorderFunc(){
 			mkdir -p /etc/zfs/zfs-list.cache
-			
 			
 			touch /etc/zfs/zfs-list.cache/$RPOOL
 			#ln -s /usr/lib/zfs-linux/zed.d/history_event-zfs-list-cacher.sh /etc/zfs/zed.d
@@ -1025,8 +1027,6 @@ systemsetupFunc_part6(){
 				sleep 1
 			done
 			cat /etc/zfs/zfs-list.cache/$RPOOL	
-			
-			
 			
 			##Stop zed:
 			pkill -9 "zed*"
