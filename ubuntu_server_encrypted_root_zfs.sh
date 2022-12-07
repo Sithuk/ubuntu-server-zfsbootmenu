@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
-##Script date: 2022-11-01
+##Script date: 2022-12-07
 
 set -euo pipefail
 #set -x
@@ -734,42 +734,58 @@ systemsetupFunc_part2(){
 }
 
 systemsetupFunc_part3(){
-	
 	identify_ubuntu_dataset_uuid
 
-	mkdosfs -F 32 -s 1 -n EFI /dev/disk/by-id/"$DISKID"-part1 
-	sleep 2
-	blkid_part1=""
-	blkid_part1="$(blkid -s UUID -o value /dev/disk/by-id/"${DISKID}"-part1)"
-	echo "$blkid_part1"
-	
-	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		##4.7 Create the EFI filesystem
+	##4.7 Create the EFI filesystem
+	apt install --yes dosfstools
 
-		##create FAT32 filesystem in EFI partition
-		apt install --yes dosfstools
-		
-		mkdir -p /boot/efi
-		
-		##fstab entries
-		
-		echo /dev/disk/by-uuid/"$blkid_part1" \
-			/boot/efi vfat \
-			defaults \
-			0 0 >> /etc/fstab
-		
-		##mount from fstab entry
-		mount /boot/efi
-		##If mount fails error code is 0. Script won't fail. Need the following check.
-		##Could use "mountpoint" command but not all distros have it. 
-		if grep /boot/efi /proc/mounts; then
-			echo "/boot/efi mounted."
+	loop_counter="$(mktemp)"
+	echo 0 > "$loop_counter" ##Assign starting counter value.
+	while IFS= read -r diskidnum;
+	do
+		i="$(cat "$loop_counter")"
+		echo "$i"
+		if [ "$i" -eq 0 ];
+		then
+			esp_mount="/boot/efi"
 		else
-			echo "/boot/efi not mounted."
-			exit 1
+			esp_mount="/boot/efi$i"
+			echo "$esp_mount" >> "$mountpoint"/tmp/backup_esp_mounts.txt
+			initial_boot_order="$(efibootmgr | grep "BootOrder" | cut -d " " -f 2)"
 		fi
-	EOCHROOT
 
+		echo "Creating FAT32 filesystem in EFI partition of disk ${diskidnum}. ESP mountpoint is ${esp_mount}"
+		mkdosfs -F 32 -s 1 -n EFI /dev/disk/by-id/"${diskidnum}"-part1
+		sleep 2
+		blkid_part1=""
+		blkid_part1="$(blkid -s UUID -o value /dev/disk/by-id/"${diskidnum}"-part1)"
+		echo "$blkid_part1" >> /tmp/esp_partition_list_uuid.txt
+
+		chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+			mkdir -p "${esp_mount}"
+
+			##fstab entry
+			echo /dev/disk/by-uuid/"$blkid_part1" \
+				"${esp_mount}" vfat \
+				defaults \
+				0 0 >> /etc/fstab
+
+			##mount from fstab entry
+			mount "${esp_mount}"
+			##If mount fails error code is 0. Script won't fail. Need the following check.
+			##Could use "mountpoint" command but not all distros have it.
+			if grep "${esp_mount}" /proc/mounts; then
+				echo "${esp_mount} mounted."
+			else
+				echo "${esp_mount} not mounted."
+				exit 1
+			fi
+		EOCHROOT
+
+		i=$((i + 1)) ##Increment counter.
+		echo "$i" > "$loop_counter"
+
+	done < /tmp/diskid_check_"${pool}".txt
 
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		DEBIAN_FRONTEND=noninteractive apt-get -yq install refind kexec-tools
@@ -879,6 +895,93 @@ systemsetupFunc_part4(){
 
 	EOCHROOT
 	
+	zbm_multiple_ESP(){
+		esp_sync_path="/etc/zfsbootmenu/generate-zbm.post.d/esp-sync.sh"
+		chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+			mkdir -p "/etc/zfsbootmenu/generate-zbm.post.d/"
+
+			#find /boot -maxdepth 1 -mindepth 1 -type d -not -path "/boot/efi" -path "/boot/efi*" > /tmp/backup_esp_mounts.txt
+
+			cat > "$esp_sync_path" <<-"EOT"
+				#!/bin/sh
+				
+				sync_func(){
+					
+				   rsync --delete-after -axHAWXS --info=progress2 /boot/efi/ "\$1"
+				
+				}
+
+			EOT
+
+			while IFS= read -r esp_mount;
+			do
+				echo "sync_func \"\$esp_mount"\" >> "$esp_sync_path"
+			done < /tmp/backup_esp_mounts.txt
+
+			chmod +x "$esp_sync_path"
+			apt install rsync
+			sh "$esp_sync_path" ##Sync main ESP to backup ESPs.
+			
+		EOCHROOT
+		
+		update_boot_manager(){
+			##Add backup ESPs to the EFI boot manager
+			loop_counter="$(mktemp)"
+			echo 0 > "$loop_counter" ##Assign starting counter value.
+			while IFS= read -r diskidnum;
+			do
+				i="$(cat "$loop_counter")"
+				echo "$i"
+				if [ "$i" -eq 0 ];
+				then
+					true
+				else
+					device_name="$(readlink -f /dev/disk/by-id/"${diskidnum}")"
+					efibootmgr --create --disk "${device_name}" --label "rEFInd Boot Manager Backup $i" --loader \\EFI\\refind\\refind_x64.efi
+				fi
+				i=$((i + 1)) ##Increment counter.
+				echo "$i" > "$loop_counter"
+			done < /tmp/diskid_check_"${pool}".txt
+		
+			##Adjust ESP boot order
+			primary_esp_num="$(efibootmgr | grep -v "Backup" | grep -w "rEFInd Boot Manager" | cut -d " " -f 1 | sed 's,Boot,,' | sed 's,*,,')"
+			num_disks="$(wc -l /tmp/diskid_check_"${pool}".txt | awk '{ print $1 }')"
+			last_esp_num=$(( "$primary_esp_num" + "$num_disks" ))
+						
+			i="$primary_esp_num"
+			while [ "$i" -ne "$last_esp_num" ]
+			do
+				if [ "$i" -eq "$primary_esp_num" ];
+				then
+					echo "$primary_esp_num," > /tmp/revised_boot_order.txt
+				else
+					sed -i "s/$/$i,/g" /tmp/revised_boot_order.txt
+				fi
+				i=$((i + 1))
+			done 
+			sed -i "s/$/$initial_boot_order/g" /tmp/revised_boot_order.txt
+			revised_boot_order="$(cat /tmp/revised_boot_order.txt)"
+			efibootmgr -o "$revised_boot_order"
+		}
+		update_boot_manager
+	}
+
+	case "$topology_pool_pointer" in
+		single)
+			true
+		;;
+
+		raidz*|mirror)
+			echo "Configuring zfsbootmenu to update all ESPs."
+			zbm_multiple_ESP
+		;;
+
+		*)
+			echo "Pool topology not recognised. Check pool topology variable."
+			exit 1
+		;;
+	esac
+
 	if [ "${remoteaccess_first_boot}" = "yes" ];
 	then
 		remote_zbm_access_Func "chroot"
@@ -1400,7 +1503,7 @@ initialinstall(){
 	debootstrap_installminsys_Func
 	systemsetupFunc_part1 #Basic system configuration.
 	systemsetupFunc_part2 #Install zfs.
-	systemsetupFunc_part3 #Format EFI partition. 
+	systemsetupFunc_part3 #Format EFI partition.
 	systemsetupFunc_part4 #Install zfsbootmenu.
 	systemsetupFunc_part5 #Config swap, tmpfs, rootpass.
 	systemsetupFunc_part6 #ZFS file system mount ordering.
