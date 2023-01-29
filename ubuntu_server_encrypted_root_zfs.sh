@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
-##Script date: 2022-12-07
+##Script date: 2023-01-29
 
 set -euo pipefail
 #set -x
@@ -303,20 +303,53 @@ ipv6_apt_live_iso_fix(){
 }
 
 debootstrap_part1_Func(){
-	##use closest mirrors
-	cp /etc/apt/sources.list /etc/apt/sources.list.bak
-	sed -i 's,deb http://security,#deb http://security,' /etc/apt/sources.list ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
-	sed -i \
-		-e 's/http:\/\/archive/mirror:\/\/mirrors/' \
-		-e 's/\/ubuntu\//\/mirrors.txt/' \
-		-e '/mirrors/ s,main restricted,main restricted universe multiverse,' \
-		/etc/apt/sources.list
-	cat /etc/apt/sources.list
-	
-	trap 'printf "%s\n%s" "The script has experienced an error during the first apt update. That may have been caused by a queried server not responding in time. Try running the script again." "If the issue is the security server not responding, then comment out the security server in the /etc/apt/sources.list. Alternatively, you can uncomment the command that does this in the install script. This affects the temporary live iso only. Not the permanent installation."' ERR
-	apt update
-	trap - ERR	##Resets the trap to doing nothing when the script experiences an error. The script will still exit on error if "set -e" is set.
-	
+
+	update_data_sources(){
+		##Enable universe and multiverse repositories.
+		cp /etc/apt/sources.list /etc/apt/sources.list.bak
+		ubuntu_original="$(grep -v 'security\|cdrom' /etc/apt/sources.list | awk '{ print $2 }' | sort -u)"
+		sed -i -e "\,${ubuntu_original}, s,main restricted,main restricted universe multiverse," /etc/apt/sources.list
+		
+		##Identify and use fastest mirror.
+		ubuntu_mirror() {
+			echo "Choosing fastest up-to-date ubuntu mirror based on download speed."
+			apt update
+			apt install -y curl
+			ubuntu_mirror=$({
+				##Choose mirrors that are up-to-date by checking the Last-Modified header.
+				##https://github.com/actions/runner-images/issues/675#issuecomment-1381837292
+				{
+				curl -s http://mirrors.ubuntu.com/mirrors.txt
+				} | xargs -I {} sh -c 'echo "$(curl -m 5 -sI {}dists/$(lsb_release -c | cut -f2)-security/Contents-$(dpkg --print-architecture).gz | sed s/\\r\$//|grep Last-Modified|awk -F": " "{ print \$2 }" | LANG=C date -f- -u +%s)" "{}"' | sort -rg | awk '{ if (NR==1) TS=$1; if ($1 == TS) print $2 }'
+				} | xargs -I {} sh -c 'echo "$(curl -r 0-102400 -m 5 -s -w %{speed_download} -o /dev/null {}ls-lR.gz)" {}' \
+				| sort -g -r | head -1 | awk '{ print $2  }')
+
+				if [ -z "${ubuntu_mirror}" ];
+				then
+					echo "No mirror identified. No changes made."
+				else
+					if [ "${ubuntu_original}" != "${ubuntu_mirror}" ];
+					then
+						sed -i "s,${ubuntu_original},${ubuntu_mirror},g" /etc/apt/sources.list
+						echo "Selected '${ubuntu_mirror}'."
+					else
+						echo "Identified mirror is already selected. No changes made."
+					fi
+				fi
+
+		}
+		ubuntu_mirror
+
+		#sed -i 's,deb http://security,#deb http://security,' /etc/apt/sources.list ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
+		
+		cat /etc/apt/sources.list
+		trap 'printf "%s\n%s" "The script has experienced an error during the first apt update. That may have been caused by a queried server not responding in time. Try running the script again." "If the issue is the security server not responding, then comment out the security server in the /etc/apt/sources.list. Alternatively, you can uncomment the command that does this in the install script. This affects the temporary live iso only. Not the permanent installation."' ERR
+		apt update
+		trap - ERR	##Resets the trap to doing nothing when the script experiences an error. The script will still exit on error if "set -e" is set.
+		}
+	update_data_sources	
+
+
 	ssh_Func(){
 		##1.2 Setup SSH to allow remote access in live environment
 		apt install --yes openssh-server
