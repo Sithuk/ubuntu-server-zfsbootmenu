@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
-##Script date: 2023-01-29
+##Script date: 2023-02-04
 
 set -euo pipefail
 #set -x
@@ -8,10 +8,9 @@ set -euo pipefail
 ##Usage: <script_filename> initial | postreboot | remoteaccess | datapool
 
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Discussion: https://www.reddit.com/r/zfs/comments/mj4nfa/ubuntu_server_2104_native_encrypted_root_on_zfs/?utm_source=share&utm_medium=web2x&context=3
 
 ##Script to be run in two parts.
-##Part 1: Run with "initial" option from Ubuntu 21.04 live iso (desktop version) terminal.
+##Part 1: Run with "initial" option from Ubuntu live iso (desktop version) terminal.
 ##Part 2: Reboot into new install.
 ##Part 2: Run with "postreboot" option after first boot into new install (login as root. p/w as set in variable section below). 
 
@@ -93,6 +92,24 @@ else
 fi
 
 ##Functions
+live_desktop_check(){
+	##Check for live desktop environment
+	if [ "$(dpkg -l ubuntu-desktop)" ];
+	then
+		echo "Desktop environment test passed."
+		if grep casper /proc/cmdline;
+		then
+			echo "Live environment test passed."
+		else
+			echo "Live environment test failed. Run script from a live desktop environment."
+			exit 1
+		fi
+	else
+		echo "Desktop environment test failed. Run script from a live desktop environment."
+		exit 1
+	fi
+}
+
 topology_min_disk_check(){
 	##Check that number of disks meets minimum number for selected topology.
 	pool="$1"
@@ -1529,6 +1546,7 @@ resettime(){
 
 initialinstall(){
 	disclaimer
+	live_desktop_check
 	getdiskID_pool "root"
 	ipv6_apt_live_iso_fix #Only if ipv6_apt_fix_live_iso variable is set to "yes".
 	debootstrap_part1_Func
@@ -1595,7 +1613,7 @@ case "${1-default}" in
 		createdatapool
 	;;
 	*)
-		echo -e "Usage: $0 initial | postreboot | remoteaccess | datapool"
+		printf "%s\n%s\n%s\n" "-----" "Usage: $0 initial | postreboot | remoteaccess | datapool" "-----"
 	;;
 esac
 
