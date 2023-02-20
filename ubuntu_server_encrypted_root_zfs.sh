@@ -1,6 +1,6 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
-##Script date: 2023-02-19
+##Script date: 2023-02-20
 
 set -euo pipefail
 #set -x
@@ -609,6 +609,7 @@ remote_zbm_access_Func(){
 	cat <<-EOH >/tmp/remote_zbm_access.sh
 		#!/bin/sh
 		##https://github.com/zbm-dev/zfsbootmenu/wiki/Remote-Access-to-ZBM
+		apt update
 		apt install -y dracut-network dropbear
 		
 		git -C /tmp clone 'https://github.com/dracut-crypt-ssh/dracut-crypt-ssh.git'
