@@ -79,12 +79,16 @@ Additional guidance and notes can be found in the script.
    
      Pyznap is not included as a package in the ubuntu repos at present. It may need to be re-compiled and re-installed. You can reference the install script for the relevant code to re-compile and re-install. 
 
-## Reddit discussion thread
+## Discussion threads
+Please use the discussions section. \
+https://github.com/Sithuk/ubuntu-server-zfsbootmenu/discussions
+
+For historical reference, the initial discussion thread can be found on reddit.
 https://www.reddit.com/r/zfs/comments/mj4nfa/ubuntu_server_2104_native_encrypted_root_on_zfs/
 
 ## Credits
-rlaager (https://openzfs.github.io/openzfs-docs/Getting%20Started/Ubuntu/Ubuntu%2022.04%20Root%20on%20ZFS.html)
-
 ahesford E39M5S62/zdykstra (https://github.com/zbm-dev/zfsbootmenu)
 
 cythoning (https://github.com/yboetz/pyznap)
+
+rlaager (https://openzfs.github.io/openzfs-docs/Getting%20Started/Ubuntu/Ubuntu%2022.04%20Root%20on%20ZFS.html)
