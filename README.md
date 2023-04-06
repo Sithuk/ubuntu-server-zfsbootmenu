@@ -28,7 +28,7 @@ Edit the variables in the ubuntu_server_encrypted_root_zfs.sh file to your prefe
 	
 Run the "install" option of the script.
 
-	./ubuntu_server_encrypted_root_zfs.sh install.
+	./ubuntu_server_encrypted_root_zfs.sh install
 	
 ## Optional: Remote access during boot
 The script includes an optional feature to provide remote access during boot. Remote access over ssh allows the system state to be rolled back to a previous snapshot without physical access to the system. This is helpful to return a system to a bootable state following a failed upgrade.
