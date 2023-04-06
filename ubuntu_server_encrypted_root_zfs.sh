@@ -1,28 +1,22 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
-##Script date: 2023-02-20
+##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
+##Script date: 2023-04-06
 
 set -euo pipefail
 #set -x
 
-##Usage: <script_filename> initial | postreboot | remoteaccess | datapool
+##Usage: <script_filename> install | remoteaccess | datapool
 
-##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-
-##Script to be run in two parts.
-##Part 1: Run with "initial" option from Ubuntu live iso (desktop version) terminal.
-##Part 2: Reboot into new install.
-##Part 2: Run with "postreboot" option after first boot into new install (login as root. p/w as set in variable section below). 
+##Run with "install" option from Ubuntu live iso (desktop version) terminal.
 
 ##Remote access can be installed by either:
 ##  setting the remoteaccess variable to "yes" in the variables section below, or
-##  running the script with the "remoteaccess" option after part 1 and part 2 are run.
-##Connect as "root" on port 222 to the server's ip.
+##  running the script with the "remoteaccess" option after rebooting into the new installation.
+##Connect as "root" on port 222 to the server's ip address.
 ##It's better to leave the remoteaccess variable below as "no" and run the script with the "remoteaccess" option
 ##  as that will use the user's authorized_keys file. Setting the remoteaccess variable to "yes" will use root's authorized_keys.
 ##Login as "root" during remote access, even if using a user's authorized_keys file. No other users are available during remote access.
-##The user's authorized_keys file will not be available until the user account is created in part 2 of the script.
-##So remote login using root's authorized_keys file is the only option during the first reboot.
 
 ##A non-root drive can be setup as an encrypted data pool using the "datapool" option.
 ##The drive will be unlocked automatically after the root drive password is entered at boot.
@@ -44,7 +38,7 @@ distro_variant="server" #Ubuntu variant to install. "server" (Ubuntu server; cli
 user="testuser" #Username for new install.
 PASSWORD="testuser" #Password for user in new install.
 hostname="ubuntu" #Name to identify the main system on the network. An underscore is DNS non-compliant.
-zfs_root_password="testtest" #Password for root pool. Minimum 8 characters. "" for no password protection. Unlocking root pool also unlocks data pool, unless the root pool has no password protection, then a separate data pool password can be set below.
+zfs_root_password="testtest" #Password for encrypted root pool. Minimum 8 characters. "" for no password encrypted protection. Unlocking root pool also unlocks data pool, unless the root pool has no password protection, then a separate data pool password can be set below.
 locale="en_GB.UTF-8" #New install language setting.
 timezone="Europe/London" #New install timezone setting.
 zfs_rpool_ashift="12" #Drive setting for zfs pool. ashift=9 means 512B sectors (used by all ancient drives), ashift=12 means 4KiB sectors (used by most modern hard drives), and ashift=13 means 8KiB sectors (used by some modern SSDs).
@@ -54,7 +48,6 @@ topology_root="single" #"single", "mirror", "raidz1", "raidz2", or "raidz3" topo
 disks_root="1" #Number of disks in array for root pool. Not used with single topology.
 EFI_boot_size="512" #EFI boot loader partition size in mebibytes (MiB).
 swap_size="500" #Swap partition size in mebibytes (MiB). Size of swap will be larger than defined here with Raidz topologies.
-openssh="yes" #"yes" to install open-ssh server in new install.
 datapool="datapool" #Non-root drive data pool name.
 topology_data="single" #"single", "mirror", "raidz1", "raidz2", or "raidz3" topology on data pool.
 disks_data="1" #Number of disks in array for data pool. Not used with single topology.
@@ -64,9 +57,9 @@ zfs_dpool_ashift="12" #See notes for rpool ashift. If ashift is set too low, a s
 zfs_compression="zstd" #"lz4" is the zfs default; "zstd" may offer better compression at a cost of higher cpu usage.
 mountpoint="/mnt/ub_server" #Mountpoint in live iso.
 remoteaccess_first_boot="no" #"yes" to enable remoteaccess during first boot. Recommend leaving as "no" and run script with "remoteaccess". See notes in section above.
-timeout_rEFInd="5" #Timeout in seconds for rEFInd boot screen until default choice selected.
-timeout_zbm_no_remote_access="15" #Timeout in seconds for zfsbootmenu when no remote access enabled.
-timeout_zbm_remote_access="30" #Timeout in seconds for zfsbootmenu when remote access enabled.
+timeout_rEFInd="3" #Timeout in seconds for rEFInd boot screen until default choice selected.
+timeout_zbm_no_remote_access="3" #Timeout in seconds for zfsbootmenu when no remote access enabled.
+timeout_zbm_remote_access="45" #Timeout in seconds for zfsbootmenu when remote access enabled. The password prompt for an encrypted root pool with allow an indefinite time to connect. An unencrypted root pool will boot the system when the timer runs out, preventing remote access.
 quiet_boot="yes" #Set to "no" to show boot sequence.
 ethprefix="e" #First letter of ethernet interface. Used to identify ethernet interface to setup networking in new install.
 install_log="ubuntu_setup_zfs_root.log" #Installation log filename.
@@ -76,6 +69,7 @@ remoteaccess_hostname="zbm" #Name to identify the zfsbootmenu system on the netw
 remoteaccess_ip_config="dhcp" #"dhcp", "dhcp,dhcp6", "dhcp6", or "static". Automatic (dhcp) or static IP assignment for zfsbootmenu remote access.
 remoteaccess_ip="192.168.0.222" #Remote access static IP address to connect to ZFSBootMenu. Not used for automatic IP configuration.
 remoteaccess_netmask="255.255.255.0" #Remote access subnet mask. Not used for "dhcp" automatic IP configuration.
+install_warning_level="PRIORITY=critical" #"PRIORITY=critical", or "FRONTEND=noninteractive". Pause install to show critical messages only or do not pause (noninteractive). Script still pauses for keyboard selection at the end.
 
 ##Check for root priviliges
 if [ "$(id -u)" -ne 0 ]; then
@@ -349,6 +343,10 @@ activate_mirror(){
 	fi
 }
 
+reinstate_non_mirror(){
+	mv ${mountpoint}/etc/apt/sources.list.non-mirror ${mountpoint}/etc/apt/sources.list ##Reinstate non-mirror package sources in new install.
+}
+
 apt_sources(){
 	source_archive="$1"
 	sources_list="$2"
@@ -367,8 +365,29 @@ apt_sources(){
 	EOLIST
 }
 
-debootstrap_part1_Func(){
+logcopy(){
+	##Copy install log to new installation.
+	if [ -d "$mountpoint" ]; then
+		cp "$log_loc"/"$install_log" "$mountpoint""$log_loc"
+	else 
+		echo "No mountpoint dir present. Install log not copied."
+	fi
+}
 
+script_copy(){
+	##Copy script to new installation
+	cp "$(readlink -f "$0")" "$mountpoint"/home/"${user}"/
+	if [ -f "$mountpoint"/home/"${user}"/"$(basename "$0")" ];
+	then
+		echo "Install script copied to ${user} home directory in new installation."
+	else
+		echo "Error copying install script to new installation."
+	fi
+}
+
+debootstrap_part1_Func(){
+	export DEBIAN_"${install_warning_level}"
+	
 	update_live_iso_data_sources(){
 		cp /etc/apt/sources.list /etc/apt/sources.list.bak
 		activate_mirror	
@@ -383,24 +402,18 @@ debootstrap_part1_Func(){
 	update_live_iso_data_sources	
 
 	ssh_Func(){
-		##1.2 Setup SSH to allow remote access in live environment
+		##Setup SSH to allow remote access in live environment
 		apt install --yes openssh-server
 		service sshd start
 		ip addr show scope global | grep inet
 	}
 	#ssh_Func
 	
-	DEBIAN_FRONTEND=noninteractive apt-get -yq install debootstrap software-properties-common gdisk zfs-initramfs
+	apt-get -yq install debootstrap software-properties-common gdisk zfs-initramfs
 	if service --status-all | grep -Fq 'zfs-zed'; then
 		systemctl stop zfs-zed
 	fi
 
-	##2 Disk formatting
-	
-	##2.1 Disk variable name (set prev)
-	
-	##2.2 Wipe disk 
-	
 	##Clear partition table
 	clear_partition_table "root"
 	sleep 2
@@ -458,7 +471,7 @@ debootstrap_part1_Func(){
 debootstrap_createzfspools_Func(){
 
 	create_rpool_Func(){
-		##2.8 create root pool
+		##Create root pool
 		
 		zpool_create_temp="/tmp/${RPOOL}_creation.sh"
 		cat > "$zpool_create_temp" <<-EOF
@@ -530,17 +543,17 @@ debootstrap_createzfspools_Func(){
 	create_rpool_Func
 	echo -e "$zfs_root_password" | sh "$zpool_create_temp" 
 	
-	##3. System installation
+	##System installation
 	mountpointsFunc(){
 
 		##zfsbootmenu setup for no separate boot pool
 		##https://github.com/zbm-dev/zfsbootmenu/wiki/Debian-Buster-installation-with-ESP-on-the-zpool-disk
 		
 		sleep 2
-		##3.1 Create filesystem datasets to act as containers
+		##Create filesystem datasets to act as containers
 		zfs create -o canmount=off -o mountpoint=none "$RPOOL"/ROOT 
 					
-		##3.2 Create root filesystem dataset
+		##Create root filesystem dataset
 		rootzfs_full_name="ubuntu.$(date +%Y.%m.%d)"
 		zfs create -o canmount=noauto -o mountpoint=/ "$RPOOL"/ROOT/"$rootzfs_full_name" ##zfsbootmenu debian guide
 		##assigns canmount=noauto on any file systems with mountpoint=/ (that is, on any additional boot environments you create).
@@ -550,7 +563,7 @@ debootstrap_createzfspools_Func(){
 		zpool set bootfs="$RPOOL"/ROOT/"$rootzfs_full_name" "$RPOOL"
 		
 		
-		##3.3 create datasets
+		##Create datasets
 		##Aim is to separate OS from user data.
 		##Allows root filesystem to be rolled back without rolling back user data such as logs.
 		##https://didrocks.fr/2020/06/16/zfs-focus-on-ubuntu-20.04-lts-zsys-dataset-layout/
@@ -593,7 +606,7 @@ debootstrap_createzfspools_Func(){
 }
 
 debootstrap_installminsys_Func(){
-	##3.4 install minimum system
+	##Install minimum system
 	##drivesizecheck
 	FREE="$(df -k --output=avail "$mountpoint" | tail -n1)"
 	if [ "$FREE" -lt 5242880 ]; then               # 15G = 15728640 = 15*1024*1024k
@@ -707,7 +720,14 @@ remote_zbm_access_Func(){
 		chroot "$mountpoint" /bin/bash -x /tmp/remote_zbm_access.sh
 	;;
 	base)
-		/bin/bash /tmp/remote_zbm_access.sh
+		##Test for live environment.
+		if grep casper /proc/cmdline;
+		then
+			echo "Live environment present. Reboot into new installation to install remoteaccess."
+			exit 1
+		else	
+			/bin/bash /tmp/remote_zbm_access.sh
+		fi
 	;;
 	*)
 		exit 1
@@ -719,14 +739,19 @@ remote_zbm_access_Func(){
 
 systemsetupFunc_part1(){
 
-	##4. System configuration
-	##4.1 configure hostname
+	##System configuration
+	
+	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+		export DEBIAN_"${install_warning_level}"
+	EOCHROOT
+
+	##Configure hostname
 	echo "$hostname" > "$mountpoint"/etc/hostname
 	echo "127.0.1.1       $hostname" >> "$mountpoint"/etc/hosts
 	
-	##4.2 configure network interface
+	##Configure network interface
 	
-	##get ethernet interface
+	##Get ethernet interface
 	ethernetinterface="$(basename "$(find /sys/class/net -maxdepth 1 -mindepth 1 -name "${ethprefix}*")")"
 	echo "$ethernetinterface"
 		
@@ -739,12 +764,12 @@ systemsetupFunc_part1(){
 		      dhcp4: yes
 	EOF
 
-	##4.4 bind virtual filesystems from LiveCD to new system
+	##Bind virtual filesystems from LiveCD to new system
 	mount --rbind /dev  "$mountpoint"/dev
 	mount --rbind /proc "$mountpoint"/proc
 	mount --rbind /sys  "$mountpoint"/sys 
 
-	##4.3 configure package sources
+	##Configure package sources
 	apt_sources "${ubuntu_original}" "$mountpoint/etc/apt/sources.list.non-mirror"
 	apt_sources "${ubuntu_mirror}" "$mountpoint/etc/apt/sources.list.mirror"
 	
@@ -764,7 +789,7 @@ systemsetupFunc_part1(){
 		
 		##set timezone
 		ln -fs /usr/share/zoneinfo/"$timezone" /etc/localtime
-		dpkg-reconfigure -f noninteractive tzdata
+		dpkg-reconfigure tzdata
 		
 	EOCHROOT
 }
@@ -781,7 +806,7 @@ systemsetupFunc_part2(){
 		apt install -yq software-properties-common
 		
 		##Ubuntu kernels come with zfs module installed. No need to install zfs-dkms for zfs version in the default repositories.
-		#DEBIAN_FRONTEND=noninteractive apt-get -yq install zfs-dkms
+		#apt-get -yq install zfs-dkms
 		
 		apt install --yes zfsutils-linux zfs-zed
 
@@ -794,7 +819,7 @@ systemsetupFunc_part2(){
 systemsetupFunc_part3(){
 	identify_ubuntu_dataset_uuid
 
-	##4.7 Create the EFI filesystem
+	##Create the EFI filesystem
 	apt install --yes dosfstools
 
 	loop_counter="$(mktemp)"
@@ -846,7 +871,7 @@ systemsetupFunc_part3(){
 	done < /tmp/diskid_check_"${pool}".txt
 
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		DEBIAN_FRONTEND=noninteractive apt-get -yq install refind kexec-tools
+		apt-get -yq install refind kexec-tools
 		apt install --yes dpkg-dev git systemd-sysv
 		
 		##Adjust timer on initial rEFInd screen
@@ -886,8 +911,8 @@ systemsetupFunc_part4(){
 			compile_zbm_git(){
 				##https://github.com/zbm-dev/zfsbootmenu/blob/master/testing/helpers/chroot-ubuntu.sh
 				##Prevent interactive prompts
-				export DEBIAN_FRONTEND=noninteractive
-				export DEBCONF_NONINTERACTIVE_SEEN=true
+				#export DEBIAN_"${install_warning_level}"
+				#export DEBCONF_NONINTERACTIVE_SEEN=true
 				
 				##bsdextrautils contains column utility used in zfsbootmenu UI.
 				apt-get install --yes bsdextrautils
@@ -1054,11 +1079,11 @@ systemsetupFunc_part4(){
 
 systemsetupFunc_part5(){
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		##4.11 set root password
+		##Set root password
 		echo -e "root:$PASSWORD" | chpasswd -c SHA256
 	EOCHROOT
 	
-	##4.12 configure swap
+	##Configure swap
 	multi_disc_swap_loc="/tmp/multi_disc_swap.sh"
 	
 	multi_disc_swap_Func(){
@@ -1144,11 +1169,11 @@ systemsetupFunc_part5(){
 	esac
 	
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		##4.13 mount a tmpfs to /tmp
+		##Mount a tmpfs to /tmp
 		cp /usr/share/systemd/tmp.mount /etc/systemd/system/
 		systemctl enable tmp.mount
 
-		##4.14 Setup system groups
+		##Setup system groups
 		addgroup --system lpadmin
 		addgroup --system lxd
 		addgroup --system sambashare
@@ -1157,7 +1182,7 @@ systemsetupFunc_part5(){
 	
 	chroot "$mountpoint" /bin/bash -x <<-"EOCHROOT"
 
-		##5.2 refresh initrd files
+		##Refresh initrd files
 		
 		ls /usr/lib/modules
 		
@@ -1172,7 +1197,7 @@ systemsetupFunc_part6(){
 	identify_ubuntu_dataset_uuid
 
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		##5.8 Fix filesystem mount ordering
+		##Fix filesystem mount ordering
 		
 		fixfsmountorderFunc(){
 			mkdir -p /etc/zfs/zfs-list.cache
@@ -1206,191 +1231,212 @@ systemsetupFunc_part6(){
 	
 }
 
-systemsetupFunc_part7(){
-	
-	identify_ubuntu_dataset_uuid
-		
+usersetup(){
+	##Create user account and setup groups
+	zfs create -o mountpoint=/home/"$user" "$RPOOL"/home/${user}
+
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+
+		##gecos parameter disabled asking for finger info
+		adduser --disabled-password --gecos "" "$user"
+		cp -a /etc/skel/. /home/"$user"
+		chown -R "$user":"$user" /home/"$user"
+		usermod -a -G adm,cdrom,dip,lpadmin,lxd,plugdev,sambashare,sudo "$user"
+		echo -e "$user:$PASSWORD" | chpasswd
+	
+	EOCHROOT
+}
+
+distroinstall(){
+	##Upgrade the minimal system
+	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+
+		export DEBIAN_"${install_warning_level}"
+		
+		#if [ ! -e /var/lib/dpkg/status ]
+		#then touch /var/lib/dpkg/status
+		#fi
+		
+		apt update 
+		
+		apt dist-upgrade --yes
+		##Install command-line environment only
+		
+		#rm -f /etc/resolv.conf ##Gives an error during ubuntu-server install. "Same file as /run/systemd/resolve/stub-resolv.conf". https://bugs.launchpad.net/ubuntu/+source/systemd/+bug/1774632
+		#ln -s /run/systemd/resolve/resolv.conf /etc/resolv.conf
+		
+		if [ "$distro_variant" != "server" ];
+		then
+			zfs create 	"$RPOOL"/var/lib/AccountsService
+		fi
+
+		case "$distro_variant" in
+			server)	
+				##Server installation has a command line interface only.
+				##Minimal install: ubuntu-server-minimal
+				apt install --yes ubuntu-server
+			;;
+			desktop)
+				##Ubuntu default desktop install has a full GUI environment.
+				##Minimal install: ubuntu-desktop-minimal
+				apt install --yes ubuntu-desktop
+			;;
+			kubuntu)
+				##Ubuntu KDE plasma desktop install has a full GUI environment.
+				##Select sddm as display manager.
+				echo sddm shared/default-x-display-manager select sddm | debconf-set-selections
+				apt install --yes kubuntu-desktop
+			;;
+			xubuntu)
+				##Ubuntu xfce desktop install has a full GUI environment.
+				##Select lightdm as display manager.
+				echo lightdm shared/default-x-display-manager select lightdm | debconf-set-selections
+				apt install --yes xubuntu-desktop
+			;;
+			budgie)
+				##Ubuntu budgie desktop install has a full GUI environment.
+				##Select lightdm as display manager.
+				echo lightdm shared/default-x-display-manager select lightdm | debconf-set-selections
+				apt install --yes ubuntu-budgie-desktop
+			;;
+			MATE)
+				##Ubuntu MATE desktop install has a full GUI environment.
+				##Select lightdm as display manager.
+				echo lightdm shared/default-x-display-manager select lightdm | debconf-set-selections
+				apt install --yes ubuntu-mate-desktop
+			;;
+			*)
+				echo "Ubuntu variant variable not recognised. Check ubuntu variant variable."
+				exit 1
+			;;
+		esac
+
+	EOCHROOT
+}
+
+NetworkManager_config(){
+	
+	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+		
+		##Update netplan config to use NetworkManager if installed. Otherwise will default to networkd.
+		if [ "\$(dpkg-query --show --showformat='\${db:Status-Status}\n' "network-manager")" = "installed" ];
+		then
+			##Update netplan configuration for NetworkManager.
+			ethernetinterface="\$(basename "\$(find /sys/class/net -maxdepth 1 -mindepth 1 -name "${ethprefix}*")")"
+			rm /etc/netplan/01-"\$ethernetinterface".yaml
+			cat > /etc/netplan/01-network-manager-all.yaml <<-EOF
+				#Let NetworkManager manage all devices on this system.
+				network:
+				  version: 2
+				  renderer: NetworkManager
+			EOF
+			
+			##Disable systemd-networkd to prevent conflicts with NetworkManager.
+			systemctl stop systemd-networkd
+			systemctl disable systemd-networkd
+			#systemctl mask systemd-networkd
+			
+			netplan apply
+		else true
+		fi
+	
+	EOCHROOT
+
+}
+
+extra_programs(){
+	
+	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+		
+		##additional programs
 		
 		##install samba mount access
 		apt install -yq cifs-utils
 		
 		##install openssh-server
-		if [ "$openssh" = "yes" ];
-		then
-			apt install -y openssh-server
-		fi
+		apt install -y openssh-server
 
-		##6.2 exit chroot
-		echo 'Exiting chroot.'
+		apt install --yes man-db tldr locate
 	
 	EOCHROOT
 
-	##Copy script into new installation
-	cp "$(readlink -f "$0")" "$mountpoint"/root/
-	if [ -f "$mountpoint"/root/"$(basename "$0")" ];
-	then
-		echo "Install script copied to /root/ in new installation."
-	else
-		echo "Error copying install script to new installation."
-	fi
-	
 }
 
-usersetup(){
-	##6.6 create user account and setup groups
-	zfs create -o mountpoint=/home/"$user" "$RPOOL"/home/${user}
+keyboard_console(){
 
-	##gecos parameter disabled asking for finger info
-	adduser --disabled-password --gecos "" "$user"
-	cp -a /etc/skel/. /home/"$user"
-	chown -R "$user":"$user" /home/"$user"
-	usermod -a -G adm,cdrom,dip,lpadmin,lxd,plugdev,sambashare,sudo "$user"
-	echo -e "$user:$PASSWORD" | chpasswd
-}
+	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 
-distroinstall(){
-	##7.1 Upgrade the minimal system
-	#if [ ! -e /var/lib/dpkg/status ]
-	#then touch /var/lib/dpkg/status
-	#fi
+		dpkg-reconfigure keyboard-configuration console-setup && setupcon #Configure keyboard and console.
 	
-	activate_mirror	
-	apt update 
-	
-	DEBIAN_FRONTEND=noninteractive apt dist-upgrade --yes
-	##7.2a Install command-line environment only
-	
-	#rm -f /etc/resolv.conf ##Gives an error during ubuntu-server install. "Same file as /run/systemd/resolve/stub-resolv.conf". https://bugs.launchpad.net/ubuntu/+source/systemd/+bug/1774632
-	#ln -s /run/systemd/resolve/resolv.conf /etc/resolv.conf
-	
-	if [ "$distro_variant" != "server" ];
-	then
-		zfs create 	"$RPOOL"/var/lib/AccountsService
-	fi
+	EOCHROOT
 
-	case "$distro_variant" in
-		server)	
-			##Server installation has a command line interface only.
-			##Minimal install: ubuntu-server-minimal
-			apt install --yes ubuntu-server
-		;;
-		desktop)
-			##Ubuntu default desktop install has a full GUI environment.
-			##Minimal install: ubuntu-desktop-minimal
-			apt install --yes ubuntu-desktop
-		;;
-		kubuntu)
-			##Ubuntu KDE plasma desktop install has a full GUI environment.
-			##Select sddm as display manager if asked during install.
-			apt install --yes kubuntu-desktop
-		;;
-		xubuntu)
-			##Ubuntu xfce desktop install has a full GUI environment.
-			##Select lightdm as display manager if asked during install.
-			apt install --yes xubuntu-desktop
-		;;
-		budgie)
-			##Ubuntu budgie desktop install has a full GUI environment.
-			##Select lightdm as display manager if asked during install.
-			apt install --yes ubuntu-budgie-desktop
-		;;
-		MATE)
-			##Ubuntu MATE desktop install has a full GUI environment.
-			##Select lightdm as display manager if asked during install.
-			apt install --yes ubuntu-mate-desktop
-		;;
-		*)
-			echo "Ubuntu variant variable not recognised. Check ubuntu variant variable."
-			exit 1
-		;;
-	esac
-}
-
-NetworkManager_config(){
-	##Update netplan config to use NetworkManager if installed. Otherwise will default to networkd.
-	if [ "$(dpkg-query --show --showformat='${db:Status-Status}\n' "network-manager")" = "installed" ];
-	then
-		##Update netplan configuration for NetworkManager.
-		ethernetinterface="$(basename "$(find /sys/class/net -maxdepth 1 -mindepth 1 -name "${ethprefix}*")")"
-		rm /etc/netplan/01-"$ethernetinterface".yaml
-		cat > /etc/netplan/01-network-manager-all.yaml <<-EOF
-			#Let NetworkManager manage all devices on this system.
-			network:
-			  version: 2
-			  renderer: NetworkManager
-		EOF
-		
-		##Disable systemd-networkd to prevent conflicts with NetworkManager.
-		systemctl stop systemd-networkd
-		systemctl disable systemd-networkd
-		#systemctl mask systemd-networkd
-		
-		netplan apply
-	else true
-	fi
-}
-
-extra_programs(){
-	##additional programs
-	apt install --yes man-db tldr locate
 }
 
 logcompress(){
-	##7.3 Disable log compression
-	for file in /etc/logrotate.d/* ; do
-		if grep -Eq "(^|[^#y])compress" "$file" ; then
-			sed -i -r "s/(^|[^#y])(compress)/\1#\2/" "$file"
-		fi
-	done
+	
+	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+		
+		##Disable log compression
+		for file in /etc/logrotate.d/* ; do
+			if grep -Eq "(^|[^#y])compress" "\$file" ; then
+				sed -i -r "s/(^|[^#y])(compress)/\1#\2/" "\$file"
+			fi
+		done
+	
+	EOCHROOT
+
 }
 
 pyznapinstall(){
-	##snapshot management
-	snapshotmanagement(){
-		##https://github.com/yboetz/pyznap
-		apt install -y python3-pip
-		pip3 --version
-		##https://docs.python-guide.org/dev/virtualenvs/
-		pip3 install virtualenv
-		virtualenv --version
-		pip3 install virtualenvwrapper
-		mkdir /opt/pyznap
-		cd /opt/pyznap
-		virtualenv venv
-		source venv/bin/activate ##enter virtual env
-		pip install pyznap
-		deactivate ##exit virtual env
-		ln -s /opt/pyznap/venv/bin/pyznap /usr/local/bin/pyznap
-		/opt/pyznap/venv/bin/pyznap setup ##config file created /etc/pyznap/pyznap.conf
-		chown root:root -R /etc/pyznap/
-		##update config
-		cat >> /etc/pyznap/pyznap.conf <<-EOF
-			[$RPOOL/ROOT]
-			frequent = 4                    
-			hourly = 24
-			daily = 7
-			weekly = 4
-			monthly = 6
-			yearly = 1
-			snap = yes
-			clean = yes
-		EOF
-		
-		cat > /etc/cron.d/pyznap <<-EOF
-			SHELL=/bin/sh
-			PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-			*/15 * * * *   root    /opt/pyznap/venv/bin/pyznap snap >> /var/log/pyznap.log 2>&1
-		EOF
+	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+		##snapshot management
+		snapshotmanagement(){
+			##https://github.com/yboetz/pyznap
+			apt install -y python3-pip
+			pip3 --version
+			##https://docs.python-guide.org/dev/virtualenvs/
+			pip3 install virtualenv
+			virtualenv --version
+			pip3 install virtualenvwrapper
+			mkdir /opt/pyznap
+			cd /opt/pyznap
+			virtualenv venv
+			source venv/bin/activate ##enter virtual env
+			pip install pyznap
+			deactivate ##exit virtual env
+			ln -s /opt/pyznap/venv/bin/pyznap /usr/local/bin/pyznap
+			/opt/pyznap/venv/bin/pyznap setup ##config file created /etc/pyznap/pyznap.conf
+			chown root:root -R /etc/pyznap/
+			##update config
+			cat >> /etc/pyznap/pyznap.conf <<-EOF
+				[$RPOOL/ROOT]
+				frequent = 4                    
+				hourly = 24
+				daily = 7
+				weekly = 4
+				monthly = 6
+				yearly = 1
+				snap = yes
+				clean = yes
+			EOF
+			
+			cat > /etc/cron.d/pyznap <<-EOF
+				SHELL=/bin/sh
+				PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+				*/15 * * * *   root    /opt/pyznap/venv/bin/pyznap snap >> /var/log/pyznap.log 2>&1
+			EOF
 
-		##integrate with apt
-		cat > /etc/apt/apt.conf.d/80-zfs-snapshot <<-EOF
-			DPkg::Pre-Invoke {"if [ -x /usr/local/bin/pyznap ]; then /usr/local/bin/pyznap snap; fi"};
-		EOF
-	
-		pyznap snap ##Take ZFS snapshots and perform cleanup as per config file.
-	}
-	snapshotmanagement
+			##integrate with apt
+			cat > /etc/apt/apt.conf.d/80-zfs-snapshot <<-EOF
+				DPkg::Pre-Invoke {"if [ -x /usr/local/bin/pyznap ]; then /usr/local/bin/pyznap snap; fi"};
+			EOF
+		
+			pyznap snap ##Take ZFS snapshots and perform cleanup as per config file.
+		}
+		snapshotmanagement
+
+	EOCHROOT
+
 }
 
 setupremoteaccess(){
@@ -1431,7 +1477,7 @@ createdatapool(){
 	clear_partition_table "data"
 	sleep 2
 	
-	##create pool mount point
+	##Create pool mount point
 	if [ -d "$datapoolmount" ]; then
 		echo "Data pool mount point exists."
 	else
@@ -1440,7 +1486,7 @@ createdatapool(){
 		echo "Data pool mount point created."
 	fi
 		
-	##automount with zfs-mount-generator
+	##Automount with zfs-mount-generator
 	touch /etc/zfs/zfs-list.cache/"$datapool"
 
 	##Create data pool
@@ -1558,11 +1604,13 @@ resettime(){
 }
 #resettime
 
-initialinstall(){
+install(){
 	disclaimer
 	live_desktop_check
+	connectivity_check #Check for internet connectivity.
 	getdiskID_pool "root"
-	ipv6_apt_live_iso_fix #Only if ipv6_apt_fix_live_iso variable is set to "yes".
+	ipv6_apt_live_iso_fix #Only active if ipv6_apt_fix_live_iso variable is set to "yes".
+
 	debootstrap_part1_Func
 	debootstrap_createzfspools_Func
 	debootstrap_installminsys_Func
@@ -1572,50 +1620,30 @@ initialinstall(){
 	systemsetupFunc_part4 #Install zfsbootmenu.
 	systemsetupFunc_part5 #Config swap, tmpfs, rootpass.
 	systemsetupFunc_part6 #ZFS file system mount ordering.
-	systemsetupFunc_part7 #Samba.
 	
-	logcopy(){
-		##Copy install log into new installation.
-		if [ -d "$mountpoint" ]; then
-			cp "$log_loc"/"$install_log" "$mountpoint""$log_loc"
-		else 
-			echo "No mountpoint dir present. Install log not copied."
-		fi
-	}
-	logcopy
-	
-	echo "Reboot."
-	echo "Post reboot login as root and run script with postreboot function enabled."
-	echo "Script should be in the root login dir following reboot (/root/)"
-	echo "First login is root:${PASSWORD-}"
-}
-
-
-postreboot(){
-	disclaimer
-	connectivity_check #Check for internet connectivity.
 	usersetup #Create user account and setup groups.
 	distroinstall #Upgrade the minimal system to the selected distro.
 	NetworkManager_config #Adjust networking config for NetworkManager, if installed by distro.
+	pyznapinstall #Snapshot management.
 	extra_programs #Install extra programs.
 	logcompress #Disable log compression.
-	dpkg-reconfigure keyboard-configuration console-setup && setupcon #Configure keyboard and console.
-	pyznapinstall #Snapshot management.
-	mv /etc/apt/sources.list.non-mirror /etc/apt/sources.list ##Reinstate non-mirror package sources.
+	reinstate_non_mirror #Reinstate non-mirror package sources in new install.
+	keyboard_console #Configure keyboard and console.
+	script_copy #Copy script to new installation.
+	logcopy #Copy install log to new installation.
 
 	echo "Install complete: ${distro_variant}."
+	echo "Script should be in the ${user} home directory following reboot."
+	echo "First login is ${user}:${PASSWORD-}"
+	echo "Reboot."
 }
 
+
 case "${1-default}" in
-	initial)
-		echo "Running initial install. Press Enter to Continue or CTRL+C to abort."
+	install)
+		echo "Running installation. Press Enter to Continue or CTRL+C to abort."
 		read -r _
-		initialinstall
-	;;
-	postreboot)
-		echo "Running postreboot setup. Press Enter to Continue or CTRL+C to abort."
-		read -r _
-		postreboot
+		install
 	;;
 	remoteaccess)
 		echo "Running remote access to ZFSBootMenu install. Press Enter to Continue or CTRL+C to abort."
@@ -1628,7 +1656,7 @@ case "${1-default}" in
 		createdatapool
 	;;
 	*)
-		printf "%s\n%s\n%s\n" "-----" "Usage: $0 initial | postreboot | remoteaccess | datapool" "-----"
+		printf "%s\n%s\n%s\n" "-----" "Usage: $0 install | remoteaccess | datapool" "-----"
 	;;
 esac
 
