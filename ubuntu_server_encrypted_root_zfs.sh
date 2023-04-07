@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2023-04-06
+##Script date: 2023-04-07
 
 set -euo pipefail
 #set -x
@@ -70,6 +70,7 @@ remoteaccess_ip_config="dhcp" #"dhcp", "dhcp,dhcp6", "dhcp6", or "static". Autom
 remoteaccess_ip="192.168.0.222" #Remote access static IP address to connect to ZFSBootMenu. Not used for automatic IP configuration.
 remoteaccess_netmask="255.255.255.0" #Remote access subnet mask. Not used for "dhcp" automatic IP configuration.
 install_warning_level="PRIORITY=critical" #"PRIORITY=critical", or "FRONTEND=noninteractive". Pause install to show critical messages only or do not pause (noninteractive). Script still pauses for keyboard selection at the end.
+extra_programs="no" #"yes", or "no". Install additional programs if not included in the ubuntu distro package. Programs: cifs-utils, openssh-server, man-db. tldr. locate.
 
 ##Check for root priviliges
 if [ "$(id -u)" -ne 0 ]; then
@@ -369,6 +370,7 @@ logcopy(){
 	##Copy install log to new installation.
 	if [ -d "$mountpoint" ]; then
 		cp "$log_loc"/"$install_log" "$mountpoint""$log_loc"
+		echo "Log file copied into new installation at ${log_loc}."
 	else 
 		echo "No mountpoint dir present. Install log not copied."
 	fi
@@ -377,7 +379,14 @@ logcopy(){
 script_copy(){
 	##Copy script to new installation
 	cp "$(readlink -f "$0")" "$mountpoint"/home/"${user}"/
-	if [ -f "$mountpoint"/home/"${user}"/"$(basename "$0")" ];
+	script_new_install_loc=/home/"${user}"/"$(basename "$0")"
+	
+	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+		chown "${user}":"${user}" "$script_new_install_loc"
+		chmod +x "$script_new_install_loc"
+	EOCHROOT
+
+	if [ -f "$mountpoint""$script_new_install_loc" ];
 	then
 		echo "Install script copied to ${user} home directory in new installation."
 	else
@@ -686,22 +695,26 @@ remote_zbm_access_Func(){
 			##The default configuration will start dropbear on TCP port 222.
 			##This can be overridden with the dropbear_port configuration option.
 			##You do not want the server listening on the default port 22.
-			##Clients that expect to find your normal host keys when connecting to an SSH server on port 22 will \
-			##refuse to connect when they find different keys provided by dropbear.
+			##Clients that expect to find your normal host keys when connecting to an SSH server on port 22 will
+			##   refuse to connect when they find different keys provided by dropbear.
+			
 			add_dracutmodules+=" crypt-ssh "
 			install_optional_items+=" /etc/cmdline.d/dracut-network.conf "
+			
 			## Copy system keys for consistent access
 			dropbear_rsa_key=/etc/dropbear/ssh_host_rsa_key
 			dropbear_ecdsa_key=/etc/dropbear/ssh_host_ecdsa_key
-			##Access by authorized keys only. No password.
+			
+			##Access is by authorized keys only. No password.
 			##By default, the list of authorized keys is taken from /root/.ssh/authorized_keys on the host.
-			##You can add your remote user key using: "ssh-copy-id -i ~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}"
-			##Password access to the root account is disabled by default in "/etc/ssh/sshd_conf".
-			##Remember to "generate-zbm" after adding the remote user key to the authorized_keys file. 
-			##The last line is optional and assumes the specified user provides an authorized_keys file \
-			##that will determine remote access to the ZFSBootMenu image.
-			##Note that login to dropbear is "root" regardless of which authorized_keys is used.
+			##A custom authorized_keys location can also be specified with the dropbear_acl variable.
+			##You can add your remote user key to a user authorized_keys file from a remote machine's terminal using:
+			##"ssh-copy-id -i ~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}"
+			Then amend/uncomment the dropbear_acl variable to match:
 			#dropbear_acl=/home/${user}/.ssh/authorized_keys
+			##Remember to "generate-zbm" on the host after adding the remote user key to the authorized_keys file. 
+			
+			##Note that login to dropbear is "root" regardless of which authorized_keys is used.
 		EOF
 		
 		##Increase ZFSBootMenu timer to allow for remote connection
@@ -1305,6 +1318,11 @@ distroinstall(){
 				echo lightdm shared/default-x-display-manager select lightdm | debconf-set-selections
 				apt install --yes ubuntu-mate-desktop
 			;;
+			#cinnamon)
+			##ubuntucinnamon-desktop package unavailable in 22.04.
+			#	##Ubuntu cinnamon desktop install has a full GUI environment.
+			#	apt install --yes ubuntucinnamon-desktop
+			#;;
 			*)
 				echo "Ubuntu variant variable not recognised. Check ubuntu variant variable."
 				exit 1
@@ -1345,20 +1363,31 @@ NetworkManager_config(){
 }
 
 extra_programs(){
-	
-	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		
-		##additional programs
-		
-		##install samba mount access
-		apt install -yq cifs-utils
-		
-		##install openssh-server
-		apt install -y openssh-server
 
-		apt install --yes man-db tldr locate
-	
-	EOCHROOT
+	case "$extra_programs" in
+	yes)	
+		chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+			
+			##additional programs
+			
+			##install samba mount access
+			apt install -yq cifs-utils
+			
+			##install openssh-server
+			apt install -y openssh-server
+
+			apt install --yes man-db tldr locate
+			
+		EOCHROOT
+	;;
+	no)
+		true
+	;;
+	*)
+		echo "Extra_programs variable not recognised. Check extra_programs variable."
+		exit 1
+	;;
+	esac
 
 }
 
@@ -1395,9 +1424,9 @@ pyznapinstall(){
 			apt install -y python3-pip
 			pip3 --version
 			##https://docs.python-guide.org/dev/virtualenvs/
-			pip3 install virtualenv
+			apt install -y python3-virtualenv
 			virtualenv --version
-			pip3 install virtualenvwrapper
+			apt install -y python3-virtualenvwrapper
 			mkdir /opt/pyznap
 			cd /opt/pyznap
 			virtualenv venv
@@ -1454,7 +1483,7 @@ setupremoteaccess(){
 		echo "Zfsbootmenu remote access installed. Connect as root on port 222 during boot: \"ssh root@{IP_ADDRESS or FQDN of zfsbootmenu} -p 222\""
 		echo "Your SSH public key must be placed in \"/home/$user/.ssh/authorized_keys\" prior to reboot or remote access will not work."
 		echo "You can add your remote user key from the remote user's terminal using: \"ssh-copy-id -i ~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}\""
-		echo "Run \"generate-zbm\" after copying across the remote user's public ssh key into the authorized_keys file."
+		echo "Run \"sudo generate-zbm\" after copying across the remote user's public ssh key into the authorized_keys file."
 	fi
 
 }
@@ -1633,7 +1662,6 @@ install(){
 	logcopy #Copy install log to new installation.
 
 	echo "Install complete: ${distro_variant}."
-	echo "Script should be in the ${user} home directory following reboot."
 	echo "First login is ${user}:${PASSWORD-}"
 	echo "Reboot."
 }
