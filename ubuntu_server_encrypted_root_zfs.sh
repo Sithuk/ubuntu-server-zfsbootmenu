@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2023-04-07
+##Script date: 2023-04-10
 
 set -euo pipefail
 #set -x
@@ -44,14 +44,14 @@ timezone="Europe/London" #New install timezone setting.
 zfs_rpool_ashift="12" #Drive setting for zfs pool. ashift=9 means 512B sectors (used by all ancient drives), ashift=12 means 4KiB sectors (used by most modern hard drives), and ashift=13 means 8KiB sectors (used by some modern SSDs).
 
 RPOOL="rpool" #Root pool name.
-topology_root="single" #"single", "mirror", "raidz1", "raidz2", or "raidz3" topology on root pool.
+topology_root="single" #"single", "mirror", "raid0", "raidz1", "raidz2", or "raidz3" topology on root pool.
 disks_root="1" #Number of disks in array for root pool. Not used with single topology.
 EFI_boot_size="512" #EFI boot loader partition size in mebibytes (MiB).
 swap_size="500" #Swap partition size in mebibytes (MiB). Size of swap will be larger than defined here with Raidz topologies.
 datapool="datapool" #Non-root drive data pool name.
-topology_data="single" #"single", "mirror", "raidz1", "raidz2", or "raidz3" topology on data pool.
+topology_data="single" #"single", "mirror", "raid0", "raidz1", "raidz2", or "raidz3" topology on data pool.
 disks_data="1" #Number of disks in array for data pool. Not used with single topology.
-zfs_data_password="" #If no root pool password is set, a data pool password can be set here. Minimum 8 characters. "" for no password protection.
+zfs_data_password="testtest" #If no root pool password is set, a data pool password can be set here. Minimum 8 characters. "" for no password protection.
 datapoolmount="/mnt/$datapool" #Non-root drive data pool mount point in new install.
 zfs_dpool_ashift="12" #See notes for rpool ashift. If ashift is set too low, a significant read/write penalty is incurred. Virtually no penalty if set higher.
 zfs_compression="zstd" #"lz4" is the zfs default; "zstd" may offer better compression at a cost of higher cpu usage.
@@ -70,7 +70,7 @@ remoteaccess_ip_config="dhcp" #"dhcp", "dhcp,dhcp6", "dhcp6", or "static". Autom
 remoteaccess_ip="192.168.0.222" #Remote access static IP address to connect to ZFSBootMenu. Not used for automatic IP configuration.
 remoteaccess_netmask="255.255.255.0" #Remote access subnet mask. Not used for "dhcp" automatic IP configuration.
 install_warning_level="PRIORITY=critical" #"PRIORITY=critical", or "FRONTEND=noninteractive". Pause install to show critical messages only or do not pause (noninteractive). Script still pauses for keyboard selection at the end.
-extra_programs="no" #"yes", or "no". Install additional programs if not included in the ubuntu distro package. Programs: cifs-utils, openssh-server, man-db. tldr. locate.
+extra_programs="no" #"yes", or "no". Install additional programs if not included in the ubuntu distro package. Programs: cifs-utils, openssh-server, man-db, tldr, locate.
 
 ##Check for root priviliges
 if [ "$(id -u)" -ne 0 ]; then
@@ -132,7 +132,7 @@ topology_min_disk_check(){
 	case "$topology_pool_pointer" in
 		single) true ;;
 		
-		mirror|raidz1)
+		mirror|raid0|raidz1)
 			num_disks_check "2"
 		;;
 		
@@ -252,7 +252,7 @@ getdiskID_pool(){
 			getdiskID "$pool" "1" "1"
 		;;
 
-		raidz*|mirror)
+		mirror|raid0|raidz)
 			echo "The $pool pool disk topology is $topology_pool_pointer with $disks_pointer disks."
 			diskidnum="1"
 			while [ "$diskidnum" -le "$disks_pointer" ];
@@ -444,7 +444,7 @@ debootstrap_part1_Func(){
 				swap_hex_code="8200"
 			;;
 
-			raidz*)
+			raid0|raidz*)
 				swap_hex_code="FD00"
 			;;
 
@@ -516,7 +516,7 @@ debootstrap_createzfspools_Func(){
 
 
 		case "$topology_root" in
-			single)
+			single|raid0)
 				echo "$RPOOL \\" >> "$zpool_create_temp"	
 				add_zpool_disks
 			;;
@@ -1071,7 +1071,7 @@ systemsetupFunc_part4(){
 			true
 		;;
 
-		raidz*|mirror)
+		mirror|raid0|raidz*)
 			echo "Configuring zfsbootmenu to update all ESPs."
 			zbm_multiple_ESP
 		;;
@@ -1091,87 +1091,139 @@ systemsetupFunc_part4(){
 }
 
 systemsetupFunc_part5(){
+
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		##Set root password
 		echo -e "root:$PASSWORD" | chpasswd -c SHA256
 	EOCHROOT
 	
 	##Configure swap
-	multi_disc_swap_loc="/tmp/multi_disc_swap.sh"
 	
-	multi_disc_swap_Func(){
+	##"plain" required in crypttab to avoid message at boot: "From cryptsetup: couldn't determine device type, assuming default (plain)."
+	crypttab_parameters="/dev/urandom plain,swap,cipher=aes-xts-plain64:sha256,size=512"
+
+	mdadm_swap_Func(){
+		mdadm_swap_loc="/tmp/multi_disc_swap.sh"
 		mdadm_level="$1" ##ZFS raidz = MDADM raid5, raidz2 = raid6. MDADM does not have raid7, so no triple parity equivalent to raidz3.
 		mdadm_devices="$2" ##Number of disks.
 	
-		cat > "$multi_disc_swap_loc" <<-EOF
+		cat > "$mdadm_swap_loc" <<-EOF
 			##Swap setup for mirror or raidz topology.
-			apt install --yes cryptsetup mdadm
+			apt install --yes mdadm
 
 			##Set MDADM level and number of disks.
-			mdadm --create /dev/md0 --metadata=1.2 \
-			--level="$mdadm_level" \
+			mdadm --create /dev/md0 --metadata=1.2 \\
+			--level="$mdadm_level" \\
 			--raid-devices="$mdadm_devices" \\
 		EOF
 	
 		##Add swap disks.
 		while IFS= read -r diskidnum;
 		do
-			echo "/dev/disk/by-id/${diskidnum}-part2 \\" >> "$multi_disc_swap_loc"
+			echo "/dev/disk/by-id/${diskidnum}-part2 \\" >> "$mdadm_swap_loc"
 		done < /tmp/diskid_check_root.txt
-		sed -i '$s,\\,,' "$zpool_create_temp" ##Remove escape characters needed for last line of EOF code block.
-	
-		##Update fstab and cryptsetup.
-		cat >> "$multi_disc_swap_loc" <<-EOF
-			##"plain" required in crypttab to avoid message at boot: "From cryptsetup: couldn't determine device type, assuming default (plain)."
-			echo swap /dev/md0 /dev/urandom \
-				  plain,swap,cipher=aes-xts-plain64:sha256,size=512 >> /etc/crypttab
-			echo /dev/mapper/swap none swap defaults 0 0 >> /etc/fstab
-		EOF
 		
+		sed -i '$s,\\,,' "$mdadm_swap_loc" ##Remove escape characters needed for last line of EOF code block.
+
+		##Update fstab and cryptsetup.
+		if [ -n "$zfs_root_password" ];
+		then
+			cat >> "$mdadm_swap_loc" <<-EOF
+				apt install --yes cryptsetup
+				echo swap /dev/md0 ${crypttab_parameters} >> /etc/crypttab
+				echo /dev/mapper/swap none swap defaults 0 0 >> /etc/fstab
+			EOF
+		else
+			cat >> "$mdadm_swap_loc" <<-EOF
+				mkswap -f /dev/md0
+				blkid_md0=""
+				blkid_md0="\$(blkid -s UUID -o value /dev/md0)"
+				echo /dev/disk/by-uuid/\${blkid_md0} none swap defaults 0 0 >> /etc/fstab
+			EOF
+		fi
+
 		##Update mdadm configuration file
-		cat >> "$multi_disc_swap_loc" <<-EOF
+		cat >> "$mdadm_swap_loc" <<-EOF
 			mdadm --detail --scan --verbose | tee -a /etc/mdadm/mdadm.conf
 		EOF
 
 		##Check MDADM status.
-		cat >> "$multi_disc_swap_loc" <<-EOF
+		cat >> "$mdadm_swap_loc" <<-EOF
 			cat /proc/mdstat
 			mdadm --detail /dev/md0
 		EOF
 		
 		##Copy MDADM setup file into chroot and run. 
-		cp "$multi_disc_swap_loc" "$mountpoint"/tmp/
-		chroot "$mountpoint" /bin/bash -x "$multi_disc_swap_loc"
+		cp "$mdadm_swap_loc" "$mountpoint"/tmp/
+		chroot "$mountpoint" /bin/bash -x "$mdadm_swap_loc"
 	}
 	
 	case "$topology_root" in
 		single)
-			chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-			##Single disk install
-			apt install --yes cryptsetup
-			##"plain" required in crypttab to avoid message at boot: "From cryptsetup: couldn't determine device type, assuming default (plain)."
-			echo swap /dev/disk/by-id/"$DISKID"-part2 /dev/urandom \
-				plain,swap,cipher=aes-xts-plain64:sha256,size=512 >> /etc/crypttab
-			echo /dev/mapper/swap none swap defaults 0 0 >> /etc/fstab
-			EOCHROOT
+			if [ -n "$zfs_root_password" ];
+			then
+				chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+					apt install --yes cryptsetup
+					echo swap /dev/disk/by-id/"$DISKID"-part2 ${crypttab_parameters} >> /etc/crypttab
+					echo /dev/mapper/swap none swap defaults 0 0 >> /etc/fstab
+				EOCHROOT
+			else
+				blkid_part2=""
+				chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+					mkswap -f /dev/disk/by-id/"$DISKID"-part2
+					blkid_part2="\$(blkid -s UUID -o value /dev/disk/by-id/$DISKID-part2)"
+					echo /dev/disk/by-uuid/\${blkid_part2} none swap defaults 0 0 >> /etc/fstab
+					swapon -a
+				EOCHROOT
+			fi
 		;;
 
 		mirror)
 			##mdadm --level=mirror is the same as --level=1.
-			multi_disc_swap_Func "mirror" "$disks_root"
+			mdadm_swap_Func "mirror" "$disks_root"
+		;;
+
+		raid0)
+			##No need for RAID0 for swap. The kernel supports stripe swapping on multiple devices if given the same priority in fstab.
+			##https://raid.wiki.kernel.org/index.php/Why_RAID%3F#Swapping_on_RAID
+
+			loop_counter="$(mktemp)"
+			echo 0 > "$loop_counter" ##Assign starting counter value.
+			while IFS= read -r diskidnum;
+			do
+				i="$(cat "$loop_counter")"
+				echo "$i"
+				swap_part_num="swap$i"
+
+				if [ -n "$zfs_root_password" ];
+				then
+					echo "${swap_part_num}" /dev/disk/by-id/"${diskidnum}"-part2 ${crypttab_parameters} >> ${mountpoint}/etc/crypttab
+					echo /dev/mapper/"${swap_part_num}" none swap defaults,pri=1 0 0 >> ${mountpoint}/etc/fstab
+
+				else
+					mkswap -f /dev/disk/by-id/${diskidnum}-part2
+					blkid_part2=""
+					blkid_part2="$(blkid -s UUID -o value /dev/disk/by-id/${diskidnum}-part2)"
+					echo /dev/disk/by-uuid/${blkid_part2} none swap defaults,pri=1 0 0 >> ${mountpoint}/etc/fstab
+				fi
+
+				i=$((i + 1)) ##Increment counter.
+				echo "$i" > "$loop_counter"
+
+			done < /tmp/diskid_check_root.txt
 		;;
 
 		raidz1)
-			multi_disc_swap_Func "5" "$disks_root"
+			mdadm_swap_Func "5" "$disks_root"
 		;;
 
 		raidz2)
-			multi_disc_swap_Func "6" "$disks_root"
+			mdadm_swap_Func "6" "$disks_root"
 		;;
 
 		raidz3)
 			##mdadm has no equivalent raid7 to raidz3. Use raid6.
-			multi_disc_swap_Func "6" "$disks_root"
+			mdadm_swap_Func "6" "$disks_root"
 		;;
 
 		*)
@@ -1393,10 +1445,17 @@ extra_programs(){
 
 keyboard_console(){
 
-	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+	chroot "$mountpoint" <<-EOCHROOT
 
-		dpkg-reconfigure keyboard-configuration console-setup && setupcon #Configure keyboard and console.
-	
+		#dpkg-reconfigure --priority=medium --frontend=dialog keyboard-configuration console-setup && setupcon #Priority needs to be set to medium or low to trigger console-setup dialog.
+
+		export DEBIAN_PRIORITY=high
+		export DEBIAN_FRONTEND=dialog
+
+		dpkg-reconfigure keyboard-configuration
+		dpkg-reconfigure console-setup #Priority needs to be set to medium or low to trigger console-setup dialog.
+		setupcon
+
 	EOCHROOT
 
 }
@@ -1482,7 +1541,8 @@ setupremoteaccess(){
 		#hostname -I
 		echo "Zfsbootmenu remote access installed. Connect as root on port 222 during boot: \"ssh root@{IP_ADDRESS or FQDN of zfsbootmenu} -p 222\""
 		echo "Your SSH public key must be placed in \"/home/$user/.ssh/authorized_keys\" prior to reboot or remote access will not work."
-		echo "You can add your remote user key from the remote user's terminal using: \"ssh-copy-id -i ~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}\""
+		echo "You can add your remote user key using the following command from the remote user's terminal if openssh-server is active on the host."
+	        echo "\"ssh-copy-id -i ~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}\""
 		echo "Run \"sudo generate-zbm\" after copying across the remote user's public ssh key into the authorized_keys file."
 	fi
 
@@ -1562,7 +1622,7 @@ createdatapool(){
 
 
 		case "$topology_data" in
-			single)
+			single|raid0)
 				echo "$datapool \\" >> "$zpool_create_temp"	
 				add_zpool_disks
 			;;
@@ -1657,6 +1717,7 @@ install(){
 	extra_programs #Install extra programs.
 	logcompress #Disable log compression.
 	reinstate_non_mirror #Reinstate non-mirror package sources in new install.
+
 	keyboard_console #Configure keyboard and console.
 	script_copy #Copy script to new installation.
 	logcopy #Copy install log to new installation.
