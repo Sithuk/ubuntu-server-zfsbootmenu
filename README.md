@@ -8,7 +8,7 @@ Supports:
 - Ubuntu 22.04.
 - Root filesystem on ZFS.
 - Choose from: Ubuntu Server, Ubuntu Desktop, Kubuntu, Xubuntu, Budgie, and Ubuntu MATE.
-- Single, mirror, raidz1, raidz2, and raidz3 topologies.
+- Single, mirror, raid0, raidz1, raidz2, and raidz3 topologies.
 - Native ZFS encryption.
 - Remote unlocking of encrypted pools at boot over SSH.
 - Automated system snapshots taken on a timer and also on system updates. 
