@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2023-04-10
+##Script date: 2023-04-23
 
 set -euo pipefail
 #set -x
@@ -70,7 +70,7 @@ remoteaccess_ip_config="dhcp" #"dhcp", "dhcp,dhcp6", "dhcp6", or "static". Autom
 remoteaccess_ip="192.168.0.222" #Remote access static IP address to connect to ZFSBootMenu. Not used for automatic IP configuration.
 remoteaccess_netmask="255.255.255.0" #Remote access subnet mask. Not used for "dhcp" automatic IP configuration.
 install_warning_level="PRIORITY=critical" #"PRIORITY=critical", or "FRONTEND=noninteractive". Pause install to show critical messages only or do not pause (noninteractive). Script still pauses for keyboard selection at the end.
-extra_programs="no" #"yes", or "no". Install additional programs if not included in the ubuntu distro package. Programs: cifs-utils, openssh-server, man-db, tldr, locate.
+extra_programs="no" #"yes", or "no". Install additional programs if not included in the ubuntu distro package. Programs: cifs-utils, locate, man-db, openssh-server, tldr.
 
 ##Check for root priviliges
 if [ "$(id -u)" -ne 0 ]; then
@@ -639,12 +639,12 @@ remote_zbm_access_Func(){
 		cp /tmp/dracut-crypt-ssh/modules/60crypt-ssh/* /usr/lib/dracut/modules.d/60crypt-ssh/
 		rm /usr/lib/dracut/modules.d/60crypt-ssh/Makefile
 		
-		##comment out references to /helper/ folder from module-setup.sh
-		sed -i \
-			-e 's,  inst "\$moddir"/helper/console_auth /bin/console_auth,  #inst "\$moddir"/helper/console_auth /bin/console_auth,' \
-			-e 's,  inst "\$moddir"/helper/console_peek.sh /bin/console_peek,  #inst "\$moddir"/helper/console_peek.sh /bin/console_peek,' \
-			-e 's,  inst "\$moddir"/helper/unlock /bin/unlock,  #inst "\$moddir"/helper/unlock /bin/unlock,' \
-			-e 's,  inst "\$moddir"/helper/unlock-reap-success.sh /sbin/unlock-reap-success,  #inst "\$moddir"/helper/unlock-reap-success.sh /sbin/unlock-reap-success,' \
+		##comment out references to /helper/ folder in module-setup.sh
+		sed -i \\
+			-e 's,  inst "\$moddir"/helper/console_auth /bin/console_auth,  #inst "\$moddir"/helper/console_auth /bin/console_auth,' \\
+			-e 's,  inst "\$moddir"/helper/console_peek.sh /bin/console_peek,  #inst "\$moddir"/helper/console_peek.sh /bin/console_peek,' \\
+			-e 's,  inst "\$moddir"/helper/unlock /bin/unlock,  #inst "\$moddir"/helper/unlock /bin/unlock,' \\
+			-e 's,  inst "\$moddir"/helper/unlock-reap-success.sh /sbin/unlock-reap-success,  #inst "\$moddir"/helper/unlock-reap-success.sh /sbin/unlock-reap-success,' \\
 			"$modulesetup"
 		
 		##create host keys
@@ -690,6 +690,9 @@ remote_zbm_access_Func(){
 		echo "  inst /etc/zfsbootmenu/dracut.conf.d/banner.txt /etc/banner.txt" | tee -a "$modulesetup"
 		echo "}" | tee -a "$modulesetup"
 		
+		##Set ownership of initramfs authorized_keys
+		sed -i '/inst "\${dropbear_acl}"/a \\  chown root:root "\${initdir}/root/.ssh/authorized_keys"' "$modulesetup"
+
 		cat <<-EOF >/etc/zfsbootmenu/dracut.conf.d/dropbear.conf
 			## Enable dropbear ssh server and pull in network configuration args
 			##The default configuration will start dropbear on TCP port 222.
@@ -698,21 +701,21 @@ remote_zbm_access_Func(){
 			##Clients that expect to find your normal host keys when connecting to an SSH server on port 22 will
 			##   refuse to connect when they find different keys provided by dropbear.
 			
-			add_dracutmodules+=" crypt-ssh "
+			add_dracutmodules+=" crypt-ssh network-legacy "
 			install_optional_items+=" /etc/cmdline.d/dracut-network.conf "
 			
 			## Copy system keys for consistent access
-			dropbear_rsa_key=/etc/dropbear/ssh_host_rsa_key
-			dropbear_ecdsa_key=/etc/dropbear/ssh_host_ecdsa_key
+			dropbear_rsa_key="/etc/dropbear/ssh_host_rsa_key"
+			dropbear_ecdsa_key="/etc/dropbear/ssh_host_ecdsa_key"
 			
 			##Access is by authorized keys only. No password.
 			##By default, the list of authorized keys is taken from /root/.ssh/authorized_keys on the host.
 			##A custom authorized_keys location can also be specified with the dropbear_acl variable.
 			##You can add your remote user key to a user authorized_keys file from a remote machine's terminal using:
 			##"ssh-copy-id -i ~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}"
-			Then amend/uncomment the dropbear_acl variable to match:
-			#dropbear_acl=/home/${user}/.ssh/authorized_keys
-			##Remember to "generate-zbm" on the host after adding the remote user key to the authorized_keys file. 
+			##Then amend/uncomment the dropbear_acl variable to match:
+			#dropbear_acl="/home/${user}/.ssh/authorized_keys"
+			##Remember to "sudo generate-zbm" on the host after adding the remote user key to the authorized_keys file.
 			
 			##Note that login to dropbear is "root" regardless of which authorized_keys is used.
 		EOF
