@@ -252,7 +252,7 @@ getdiskID_pool(){
 			getdiskID "$pool" "1" "1"
 		;;
 
-		mirror|raid0|raidz)
+		mirror|raid0|raidz*)
 			echo "The $pool pool disk topology is $topology_pool_pointer with $disks_pointer disks."
 			diskidnum="1"
 			while [ "$diskidnum" -le "$disks_pointer" ];
