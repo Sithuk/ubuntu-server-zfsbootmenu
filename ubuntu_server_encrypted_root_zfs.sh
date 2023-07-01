@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2023-04-23
+##Script date: 2023-07-01
 
 set -euo pipefail
 #set -x
@@ -1176,6 +1176,7 @@ systemsetupFunc_part5(){
 					mkswap -f /dev/disk/by-id/"$DISKID"-part2
 					blkid_part2="\$(blkid -s UUID -o value /dev/disk/by-id/$DISKID-part2)"
 					echo /dev/disk/by-uuid/\${blkid_part2} none swap defaults 0 0 >> /etc/fstab
+					sleep 2
 					swapon -a
 				EOCHROOT
 			fi
