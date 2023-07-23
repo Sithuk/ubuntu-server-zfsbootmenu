@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2023-07-01
+##Script date: 2023-07-23
 
 set -euo pipefail
 #set -x
@@ -850,7 +850,6 @@ systemsetupFunc_part3(){
 		else
 			esp_mount="/boot/efi$i"
 			echo "$esp_mount" >> "$mountpoint"/tmp/backup_esp_mounts.txt
-			initial_boot_order="$(efibootmgr | grep "BootOrder" | cut -d " " -f 2)"
 		fi
 
 		echo "Creating FAT32 filesystem in EFI partition of disk ${diskidnum}. ESP mountpoint is ${esp_mount}"
@@ -885,6 +884,8 @@ systemsetupFunc_part3(){
 		echo "$i" > "$loop_counter"
 
 	done < /tmp/diskid_check_"${pool}".txt
+
+	initial_boot_order="$(efibootmgr | grep "BootOrder" | cut -d " " -f 2)" ##Initial boot order before refind installed.
 
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		apt-get -yq install refind kexec-tools
@@ -1047,24 +1048,27 @@ systemsetupFunc_part4(){
 			done < /tmp/diskid_check_"${pool}".txt
 		
 			##Adjust ESP boot order
-			primary_esp_num="$(efibootmgr | grep -v "Backup" | grep -w "rEFInd Boot Manager" | cut -d " " -f 1 | sed 's,Boot,,' | sed 's,*,,')"
+			##Each boot entry in efibootmgr is identified by a boot number in hexadecimal.
+			primary_esp_hex="$(efibootmgr | grep -v "Backup" | grep -w "rEFInd Boot Manager" | cut -d " " -f 1 | sed 's,Boot,,' | sed 's,*,,')"
+			primary_esp_dec="$(printf "%d" 0x"${primary_esp_hex}")"
 			num_disks="$(wc -l /tmp/diskid_check_"${pool}".txt | awk '{ print $1 }')"
-			last_esp_num=$(( "$primary_esp_num" + "$num_disks" ))
-						
-			i="$primary_esp_num"
-			while [ "$i" -ne "$last_esp_num" ]
+			esp_loop_exit_dec="$(( "${primary_esp_dec}" + "${num_disks}" ))"
+
+			i="${primary_esp_dec}"
+			while [ "$i" -ne "${esp_loop_exit_dec}" ]
 			do
-				if [ "$i" -eq "$primary_esp_num" ];
+				if [ "$i" -eq "$primary_esp_dec" ];
 				then
-					echo "$primary_esp_num," > /tmp/revised_boot_order.txt
+					echo "${primary_esp_hex}," > /tmp/revised_boot_order.txt
 				else
-					sed -i "s/$/$i,/g" /tmp/revised_boot_order.txt
+					loop_counter_hex="$(printf "%04X" "$i")"
+					sed -i "s/$/${loop_counter_hex},/g" /tmp/revised_boot_order.txt
 				fi
 				i=$((i + 1))
 			done 
-			sed -i "s/$/$initial_boot_order/g" /tmp/revised_boot_order.txt
+			sed -i "s/$/${initial_boot_order}/g" /tmp/revised_boot_order.txt
 			revised_boot_order="$(cat /tmp/revised_boot_order.txt)"
-			efibootmgr -o "$revised_boot_order"
+			efibootmgr -o "${revised_boot_order}"
 		}
 		update_boot_manager
 	}
