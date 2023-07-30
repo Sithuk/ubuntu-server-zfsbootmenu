@@ -65,7 +65,7 @@ Additional guidance and notes can be found in the script.
        - Use "zfs destroy" to delete the dataset that corresponds to the boot environment. For example, if you want to delete a root dataset called "ubuntu.2022.10.01" then you can enter the command "zfs destroy -r rpool/ROOT/ubuntu.2022.10.01".
 
    - Delete a boot environment from zfsbootmenu
-     - From the main menu, select the boot environment you want to destroy. Press CTRL+W to re-import the pool as read/write, then CTRL+R to enter a shell. You can then use "zfs destroy" as in the point above. Press CTRL+D to exit the shell and return to the menu when done.
+     - From the main menu, select the boot environment you want to destroy. Press CTRL+W to re-import the pool as read/write, then CTRL+R to enter the recovery shell. You can then use "zfs destroy" as in the point above. Press CTRL+D to exit the shell and return to the menu when done.
 
 3. Can I upgrade the system normally using do-release-upgrade?
    - Zfsbootmenu
@@ -74,6 +74,22 @@ Additional guidance and notes can be found in the script.
    - Pyznap
    
      Pyznap is not included as a package in the ubuntu repos at present. It may need to be re-compiled and re-installed. You can reference the install script for the relevant code to re-compile and re-install. 
+
+4. How do I change the encrypted root password?
+
+   You can change the password of your encrypted root as follows. Change "rpool" to the name of your root pool.
+      - Update root pool password file.
+
+        `nano /etc/zfs/rpool.key`
+      - Update root pool key.
+
+        `zfs change-key -o keylocation=file:///etc/zfs/rpool.key -o keyformat=passphrase rpool`
+      - Optional: If you have an encrypted data pool that unlocks at boot using the root pool password, then update its key too. Change "datapool" to the name of your data pool.
+
+        `zfs change-key -o keylocation=file:///etc/zfs/rpool.key -o keyformat=passphrase datapool`
+      - Update initramfs.
+
+        `update-initramfs -u -k all`
 
 ## Discussion threads
 Please use the discussions section. \
