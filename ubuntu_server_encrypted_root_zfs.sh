@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2023-07-23
+##Script date: 2023-11-01
 
 set -euo pipefail
 #set -x
@@ -113,10 +113,14 @@ topology_min_disk_check(){
 	topology_pool_pointer="topology_$pool"
 	eval echo "User defined topology for ${pool} pool: \$${topology_pool_pointer}"
 	eval topology_pool_pointer="\$${topology_pool_pointer}"
+	topology_pool_pointer_tmp="/tmp/topology_pool_pointer.txt"
+	printf "%s" "${topology_pool_pointer}" > "${topology_pool_pointer_tmp}"
 	
 	disks_pointer="disks_${pool}"
 	eval echo "User defined number of disks in pool: \$${disks_pointer}"
 	eval disks_pointer=\$"${disks_pointer}"
+	disks_pointer_tmp="/tmp/disks_pointer.txt"
+	printf "%s" "${disks_pointer}" > "${disks_pointer_tmp}"
 
 	num_disks_check(){
 		min_num_disks="$1"
@@ -237,14 +241,6 @@ getdiskID_pool(){
 	
 	##Create temp file to check for duplicated disk ID entry.
 	true > /tmp/diskid_check_"${pool}".txt
-	
-	topology_pool_pointer="topology_$pool"
-	#eval echo \$"${topology_pool_pointer}"
-	eval topology_pool_pointer="\$${topology_pool_pointer}"
-	
-	disks_pointer="disks_${pool}"
-	#eval echo \$"${disks_pointer}"
-	eval disks_pointer=\$"${disks_pointer}"
 
 	case "$topology_pool_pointer" in
 		single)
@@ -626,6 +622,91 @@ debootstrap_installminsys_Func(){
 	debootstrap "$ubuntuver" "$mountpoint"
 }
 
+zfsbootmenu_install_config_Func(){
+	zfsbootmenu_install_config_loc="/tmp/zfsbootmenu_install_config.sh"
+	cat <<-EOH >"${zfsbootmenu_install_config_loc}"
+		#!/bin/sh
+		apt update
+
+		compile_zbm_git(){
+			##https://github.com/zbm-dev/zfsbootmenu/blob/master/testing/helpers/chroot-ubuntu.sh
+			##Prevent interactive prompts
+			#export DEBIAN_"${install_warning_level}"
+			#export DEBCONF_NONINTERACTIVE_SEEN=true
+
+			##bsdextrautils contains column utility used in zfsbootmenu UI.
+			apt-get install --yes bsdextrautils
+
+			##Install optional mbuffer package.
+			##https://github.com/zbm-dev/zfsbootmenu/blob/master/zfsbootmenu/install-helpers.sh
+			apt-get install --yes mbuffer
+
+			##Install packages needed for zfsbootmenu
+			apt-get install --yes --no-install-recommends \
+				libsort-versions-perl \
+				libboolean-perl \
+				libyaml-pp-perl \
+				git \
+				fzf \
+				make \
+				kexec-tools \
+				dracut-core \
+				fzf
+
+			mkdir -p /usr/local/src/zfsbootmenu
+			cd /usr/local/src/zfsbootmenu
+			##Download the latest zfsbootmenu source
+			apt-get install curl
+			curl -L https://get.zfsbootmenu.org/source | tar -zxv --strip-components=1 -f -
+
+			make core dracut ##"make install" installs mkinitcpio, not needed.
+
+		}
+		compile_zbm_git
+
+		##configure zfsbootmenu
+		config_zbm(){
+			##https://github.com/zbm-dev/zfsbootmenu/blob/master/testing/helpers/configure-ubuntu.sh
+			##Update configuration file
+			sed \\
+			-e 's,ManageImages:.*,ManageImages: true,' \\
+			-e 's@ImageDir:.*@ImageDir: /boot/efi/EFI/ubuntu@' \\
+			-e 's,Versions:.*,Versions: false,' \\
+			-i /etc/zfsbootmenu/config.yaml
+
+			if [ "$quiet_boot" = "no" ]; then
+				sed -i 's,ro quiet,ro,' /etc/zfsbootmenu/config.yaml
+			fi
+		}
+		config_zbm
+
+		#update-initramfs -c -k all
+		generate-zbm --debug
+
+	EOH
+
+	case "$1" in
+	chroot)
+		cp "${zfsbootmenu_install_config_loc}" "$mountpoint"/tmp
+		chroot "$mountpoint" /bin/bash -x "${zfsbootmenu_install_config_loc}"
+	;;
+	base)
+		##Test for live environment.
+		if grep casper /proc/cmdline;
+		then
+			echo "Live environment present. Reboot into new installation to re-install zfsbootmenu."
+			exit 1
+		else
+			/bin/bash "${zfsbootmenu_install_config_loc}"
+		fi
+	;;
+	*)
+		exit 1
+	;;
+	esac
+
+}
+
 remote_zbm_access_Func(){
 	modulesetup="/usr/lib/dracut/modules.d/60crypt-ssh/module-setup.sh"
 	cat <<-EOH >/tmp/remote_zbm_access.sh
@@ -751,7 +832,6 @@ remote_zbm_access_Func(){
 	esac
 	
 }
-
 
 systemsetupFunc_part1(){
 
@@ -902,8 +982,7 @@ systemsetupFunc_part3(){
 
 systemsetupFunc_part4(){
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		zfsbootmenuinstall(){
-
+		rpool_settings(){
 			if [ -n "$zfs_root_password" ];
 			then
 				##Convert rpool to use keyfile.
@@ -923,80 +1002,27 @@ systemsetupFunc_part4(){
 			else
 				zfs set org.zfsbootmenu:commandline="spl_hostid=\$( hostid ) ro" "$RPOOL"/ROOT
 			fi
-
-			##install zfsbootmenu
-			compile_zbm_git(){
-				##https://github.com/zbm-dev/zfsbootmenu/blob/master/testing/helpers/chroot-ubuntu.sh
-				##Prevent interactive prompts
-				#export DEBIAN_"${install_warning_level}"
-				#export DEBCONF_NONINTERACTIVE_SEEN=true
-				
-				##bsdextrautils contains column utility used in zfsbootmenu UI.
-				apt-get install --yes bsdextrautils
-				
-				##Install optional mbuffer package.
-				##https://github.com/zbm-dev/zfsbootmenu/blob/master/zfsbootmenu/install-helpers.sh
-				apt-get install --yes mbuffer
-				
-				##Install packages needed for zfsbootmenu
-				apt-get install --yes --no-install-recommends git dracut-core fzf kexec-tools cpanminus gcc make
-				
-				##Remove temporary directory if already present
-				if [ -d /tmp/zfsbootmenu ];
-				then
-					rm -rf /tmp/zfsbootmenu
-				fi
-				
-				apt install -y git make
-				cd /tmp
-				git clone 'https://github.com/zbm-dev/zfsbootmenu.git'
-				cd zfsbootmenu
-				make core dracut ##"make install" installs mkinitcpio, not needed.
-				
-				##Install perl dependencies
-				cpanm --notest --installdeps .
-				
-			}
-			compile_zbm_git
-				
-			##configure zfsbootmenu
-			config_zbm(){
-				##https://github.com/zbm-dev/zfsbootmenu/blob/master/testing/helpers/configure-ubuntu.sh
-				##Update configuration file
-				sed \\
-				-e 's,ManageImages:.*,ManageImages: true,' \\
-				-e 's@ImageDir:.*@ImageDir: /boot/efi/EFI/ubuntu@' \\
-				-e 's,Versions:.*,Versions: false,' \\
-				-i /etc/zfsbootmenu/config.yaml
-			
-				if [ "$quiet_boot" = "no" ]; then
-					sed -i 's,ro quiet,ro,' /etc/zfsbootmenu/config.yaml
-				fi
-				
-			}
-			config_zbm
-				
-			update-initramfs -c -k all
-			generate-zbm --debug
-				
-			##Update refind_linux.conf
-			config_refind(){
-				##zfsbootmenu command-line parameters:
-				##https://github.com/zbm-dev/zfsbootmenu/blob/master/pod/zfsbootmenu.7.pod
-				cat <<-EOF > /boot/efi/EFI/ubuntu/refind_linux.conf
-					"Boot default"  "zfsbootmenu:POOL=$RPOOL zbm.import_policy=hostid zbm.set_hostid zbm.timeout=$timeout_zbm_no_remote_access ro quiet loglevel=0"
-					"Boot to menu"  "zfsbootmenu:POOL=$RPOOL zbm.import_policy=hostid zbm.set_hostid zbm.show ro quiet loglevel=0"
-				EOF
-				
-				if [ "$quiet_boot" = "no" ]; then
-					sed -i 's,ro quiet,ro,' /boot/efi/EFI/ubuntu/refind_linux.conf
-				fi
-			}
-			config_refind
-			
 		}
-		zfsbootmenuinstall
+		rpool_settings
+	EOCHROOT
 
+	zfsbootmenu_install_config_Func "chroot"
+
+	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+		##Update refind_linux.conf
+		config_refind(){
+			##zfsbootmenu command-line parameters:
+			##https://github.com/zbm-dev/zfsbootmenu/blob/master/pod/zfsbootmenu.7.pod
+			cat <<-EOF > /boot/efi/EFI/ubuntu/refind_linux.conf
+				"Boot default"  "zbm.timeout=$timeout_zbm_no_remote_access ro quiet loglevel=0"
+				"Boot to menu"  "zbm.show ro quiet loglevel=0"
+			EOF
+
+			if [ "$quiet_boot" = "no" ]; then
+				sed -i 's,ro quiet,ro,' /boot/efi/EFI/ubuntu/refind_linux.conf
+			fi
+		}
+		config_refind
 	EOCHROOT
 	
 	zbm_multiple_ESP(){
@@ -1073,6 +1099,7 @@ systemsetupFunc_part4(){
 		update_boot_manager
 	}
 
+	topology_pool_pointer="$(cat "/tmp/topology_pool_pointer.txt")"
 	case "$topology_pool_pointer" in
 		single)
 			true
@@ -1169,6 +1196,7 @@ systemsetupFunc_part5(){
 		single)
 			if [ -n "$zfs_root_password" ];
 			then
+				DISKID="$(cat /tmp/diskid_check_root.txt)"
 				chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 					apt install --yes cryptsetup
 					echo swap /dev/disk/by-id/"$DISKID"-part2 ${crypttab_parameters} >> /etc/crypttab
@@ -1176,6 +1204,7 @@ systemsetupFunc_part5(){
 				EOCHROOT
 			else
 				blkid_part2=""
+				DISKID="$(cat /tmp/diskid_check_root.txt)"
 				chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 					mkswap -f /dev/disk/by-id/"$DISKID"-part2
 					blkid_part2="\$(blkid -s UUID -o value /dev/disk/by-id/$DISKID-part2)"
@@ -1261,45 +1290,6 @@ systemsetupFunc_part5(){
 		
 		update-initramfs -c -k all
 		
-	EOCHROOT
-	
-}
-
-systemsetupFunc_part6(){
-	
-	identify_ubuntu_dataset_uuid
-
-	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		##Fix filesystem mount ordering
-		
-		fixfsmountorderFunc(){
-			mkdir -p /etc/zfs/zfs-list.cache
-			
-			touch /etc/zfs/zfs-list.cache/$RPOOL
-			#ln -s /usr/lib/zfs-linux/zed.d/history_event-zfs-list-cacher.sh /etc/zfs/zed.d
-			zed -F &
-			sleep 2
-			
-			##Verify that zed updated the cache by making sure this is not empty:
-			##If it is empty, force a cache update and check again:
-			##Note can take a while. c.30 seconds for loop to succeed.
-			cat /etc/zfs/zfs-list.cache/$RPOOL
-			while [ ! -s /etc/zfs/zfs-list.cache/$RPOOL ]
-			do
-				zfs set canmount=noauto $RPOOL/ROOT/${rootzfs_full_name}
-				sleep 1
-			done
-			cat /etc/zfs/zfs-list.cache/$RPOOL	
-			
-			##Stop zed:
-			pkill -9 "zed*"
-
-			##Fix the paths to eliminate $mountpoint:
-			sed -Ei "s|$mountpoint/?|/|" /etc/zfs/zfs-list.cache/$RPOOL
-			cat /etc/zfs/zfs-list.cache/$RPOOL
-
-		}
-		fixfsmountorderFunc
 	EOCHROOT
 	
 }
@@ -1393,7 +1383,6 @@ distroinstall(){
 }
 
 NetworkManager_config(){
-	
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		
 		##Update netplan config to use NetworkManager if installed. Otherwise will default to networkd.
@@ -1419,7 +1408,57 @@ NetworkManager_config(){
 		fi
 	
 	EOCHROOT
+}
 
+pyznapinstall(){
+	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+		##snapshot management
+		snapshotmanagement(){
+			##https://github.com/yboetz/pyznap
+			apt install -y python3-pip
+			pip3 --version
+			##https://docs.python-guide.org/dev/virtualenvs/
+			apt install -y python3-virtualenv
+			virtualenv --version
+			apt install -y python3-virtualenvwrapper
+			mkdir /opt/pyznap
+			cd /opt/pyznap
+			virtualenv venv
+			source venv/bin/activate ##enter virtual env
+			pip install pyznap
+			deactivate ##exit virtual env
+			ln -s /opt/pyznap/venv/bin/pyznap /usr/local/bin/pyznap
+			/opt/pyznap/venv/bin/pyznap setup ##config file created /etc/pyznap/pyznap.conf
+			chown root:root -R /etc/pyznap/
+			##update config
+			cat >> /etc/pyznap/pyznap.conf <<-EOF
+				[$RPOOL/ROOT]
+				frequent = 4
+				hourly = 24
+				daily = 7
+				weekly = 4
+				monthly = 6
+				yearly = 1
+				snap = yes
+				clean = yes
+			EOF
+
+			cat > /etc/cron.d/pyznap <<-EOF
+				SHELL=/bin/sh
+				PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+				*/15 * * * *   root    /opt/pyznap/venv/bin/pyznap snap >> /var/log/pyznap.log 2>&1
+			EOF
+
+			##integrate with apt
+			cat > /etc/apt/apt.conf.d/80-zfs-snapshot <<-EOF
+				DPkg::Pre-Invoke {"if [ -x /usr/local/bin/pyznap ]; then /usr/local/bin/pyznap snap; fi"};
+			EOF
+
+			pyznap snap ##Take ZFS snapshots and perform cleanup as per config file.
+		}
+		snapshotmanagement
+
+	EOCHROOT
 }
 
 extra_programs(){
@@ -1451,8 +1490,20 @@ extra_programs(){
 
 }
 
-keyboard_console(){
+logcompress(){
+	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 
+		##Disable log compression
+		for file in /etc/logrotate.d/* ; do
+			if grep -Eq "(^|[^#y])compress" "\$file" ; then
+				sed -i -r "s/(^|[^#y])(compress)/\1#\2/" "\$file"
+			fi
+		done
+
+	EOCHROOT
+}
+
+keyboard_console(){
 	chroot "$mountpoint" <<-EOCHROOT
 
 		#dpkg-reconfigure --priority=medium --frontend=dialog keyboard-configuration console-setup && setupcon #Priority needs to be set to medium or low to trigger console-setup dialog.
@@ -1465,71 +1516,39 @@ keyboard_console(){
 		setupcon
 
 	EOCHROOT
-
 }
 
-logcompress(){
-	
+fixfsmountorder(){
+
+	identify_ubuntu_dataset_uuid
+
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		
-		##Disable log compression
-		for file in /etc/logrotate.d/* ; do
-			if grep -Eq "(^|[^#y])compress" "\$file" ; then
-				sed -i -r "s/(^|[^#y])(compress)/\1#\2/" "\$file"
-			fi
+		##Fix filesystem mount ordering
+
+		mkdir -p /etc/zfs/zfs-list.cache
+
+		touch /etc/zfs/zfs-list.cache/$RPOOL
+		#ln -s /usr/lib/zfs-linux/zed.d/history_event-zfs-list-cacher.sh /etc/zfs/zed.d
+		zed -F &
+		sleep 2
+
+		##Verify that zed updated the cache by making sure this is not empty:
+		##If it is empty, force a cache update and check again:
+		##Note can take a while. c.30 seconds for loop to succeed.
+		cat /etc/zfs/zfs-list.cache/$RPOOL
+		while [ ! -s /etc/zfs/zfs-list.cache/$RPOOL ]
+		do
+			zfs set canmount=noauto $RPOOL/ROOT/${rootzfs_full_name}
+			sleep 1
 		done
-	
-	EOCHROOT
+		cat /etc/zfs/zfs-list.cache/$RPOOL
 
-}
+		##Stop zed:
+		pkill -9 "zed*"
 
-pyznapinstall(){
-	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		##snapshot management
-		snapshotmanagement(){
-			##https://github.com/yboetz/pyznap
-			apt install -y python3-pip
-			pip3 --version
-			##https://docs.python-guide.org/dev/virtualenvs/
-			apt install -y python3-virtualenv
-			virtualenv --version
-			apt install -y python3-virtualenvwrapper
-			mkdir /opt/pyznap
-			cd /opt/pyznap
-			virtualenv venv
-			source venv/bin/activate ##enter virtual env
-			pip install pyznap
-			deactivate ##exit virtual env
-			ln -s /opt/pyznap/venv/bin/pyznap /usr/local/bin/pyznap
-			/opt/pyznap/venv/bin/pyznap setup ##config file created /etc/pyznap/pyznap.conf
-			chown root:root -R /etc/pyznap/
-			##update config
-			cat >> /etc/pyznap/pyznap.conf <<-EOF
-				[$RPOOL/ROOT]
-				frequent = 4                    
-				hourly = 24
-				daily = 7
-				weekly = 4
-				monthly = 6
-				yearly = 1
-				snap = yes
-				clean = yes
-			EOF
-			
-			cat > /etc/cron.d/pyznap <<-EOF
-				SHELL=/bin/sh
-				PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-				*/15 * * * *   root    /opt/pyznap/venv/bin/pyznap snap >> /var/log/pyznap.log 2>&1
-			EOF
-
-			##integrate with apt
-			cat > /etc/apt/apt.conf.d/80-zfs-snapshot <<-EOF
-				DPkg::Pre-Invoke {"if [ -x /usr/local/bin/pyznap ]; then /usr/local/bin/pyznap snap; fi"};
-			EOF
-		
-			pyznap snap ##Take ZFS snapshots and perform cleanup as per config file.
-		}
-		snapshotmanagement
+		##Fix the paths to eliminate $mountpoint:
+		sed -Ei "s|$mountpoint/?|/|" /etc/zfs/zfs-list.cache/$RPOOL
+		cat /etc/zfs/zfs-list.cache/$RPOOL
 
 	EOCHROOT
 
@@ -1553,7 +1572,6 @@ setupremoteaccess(){
 	        echo "\"ssh-copy-id -i ~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}\""
 		echo "Run \"sudo generate-zbm\" after copying across the remote user's public ssh key into the authorized_keys file."
 	fi
-
 }
 
 createdatapool(){
@@ -1716,8 +1734,7 @@ install(){
 	systemsetupFunc_part3 #Format EFI partition.
 	systemsetupFunc_part4 #Install zfsbootmenu.
 	systemsetupFunc_part5 #Config swap, tmpfs, rootpass.
-	systemsetupFunc_part6 #ZFS file system mount ordering.
-	
+
 	usersetup #Create user account and setup groups.
 	distroinstall #Upgrade the minimal system to the selected distro.
 	NetworkManager_config #Adjust networking config for NetworkManager, if installed by distro.
@@ -1728,13 +1745,13 @@ install(){
 
 	keyboard_console #Configure keyboard and console.
 	script_copy #Copy script to new installation.
+	fixfsmountorder #ZFS file system mount ordering.
 	logcopy #Copy install log to new installation.
 
 	echo "Install complete: ${distro_variant}."
 	echo "First login is ${user}:${PASSWORD-}"
 	echo "Reboot."
 }
-
 
 case "${1-default}" in
 	install)
