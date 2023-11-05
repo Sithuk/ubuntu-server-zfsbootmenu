@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2023-11-04
+##Script date: 2023-11-05
 
 set -euo pipefail
 #set -x
@@ -625,7 +625,9 @@ debootstrap_installminsys_Func(){
 zfsbootmenu_install_config_Func(){
 	zfsbootmenu_install_config_loc="/tmp/zfsbootmenu_install_config.sh"
 	cat <<-EOH >"${zfsbootmenu_install_config_loc}"
-		#!/bin/sh
+		#!/bin/bash
+		set -euo pipefail
+		set -x
 		apt update
 
 		compile_zbm_git(){
@@ -642,22 +644,25 @@ zfsbootmenu_install_config_Func(){
 			apt-get install --yes mbuffer
 
 			##Install packages needed for zfsbootmenu
-			apt-get install --yes --no-install-recommends \
-				libsort-versions-perl \
-				libboolean-perl \
-				libyaml-pp-perl \
-				git \
-				fzf \
-				make \
-				kexec-tools \
-				dracut-core \
+			apt-get install --yes --no-install-recommends \\
+				libsort-versions-perl \\
+				libboolean-perl \\
+				libyaml-pp-perl \\
+				git \\
+				fzf \\
+				make \\
+				kexec-tools \\
+				dracut-core \\
 				fzf
 
 			mkdir -p /usr/local/src/zfsbootmenu
 			cd /usr/local/src/zfsbootmenu
+
 			##Download the latest zfsbootmenu source
-			apt-get install curl
-			curl -L https://get.zfsbootmenu.org/source | tar -zxv --strip-components=1 -f -
+			apt-get install --yes curl
+			#latest_zbm_source="https://get.zfsbootmenu.org/source" #Source code from zfsbootmenu website.
+			latest_zbm_source="$(curl -s https://api.github.com/repos/zbm-dev/zfsbootmenu/releases/latest | grep tarball | cut -d : -f 2,3 | tr -d \"|sed 's/^[ \t]*//'|sed 's/,//')"
+			curl -L "\${latest_zbm_source-default}" | tar -zxv --strip-components=1 -f -
 
 			make core dracut ##"make install" installs mkinitcpio, not needed.
 
@@ -680,7 +685,7 @@ zfsbootmenu_install_config_Func(){
 		}
 		config_zbm
 
-		#update-initramfs -c -k all
+		update-initramfs -c -k all
 		generate-zbm --debug
 
 	EOH
