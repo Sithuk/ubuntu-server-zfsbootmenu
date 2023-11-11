@@ -1731,7 +1731,9 @@ reinstall-zbm(){
 	
 	isolate_generate_zbm_version(){
 		##generate-zbm quits after printing version number. Isolate in a function to allow script to continue.
-		generate-zbm --showver > /tmp/zfs_installed_version.txt
+		set +e
+		generate-zbm --showver > /tmp/zfs_installed_version.txt || echo "No version number reported by generate-zbm --showver." > /tmp/zfs_installed_version.txt
+		set -e
 	}
 	
 	disclaimer
