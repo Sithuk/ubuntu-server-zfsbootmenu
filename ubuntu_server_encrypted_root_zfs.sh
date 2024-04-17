@@ -955,7 +955,7 @@ systemsetupFunc_part3(){
 		fi
 
 		echo "Creating FAT32 filesystem in EFI partition of disk ${diskidnum}. ESP mountpoint is ${esp_mount}"
-		umount /dev/disk/by-id/"${diskidnum}"-part1
+		umount -q /dev/disk/by-id/"${diskidnum}"-part1 || true
 		mkdosfs -F 32 -s 1 -n EFI /dev/disk/by-id/"${diskidnum}"-part1
 		sleep 2
 		blkid_part1=""
