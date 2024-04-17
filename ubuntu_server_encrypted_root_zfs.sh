@@ -468,6 +468,7 @@ debootstrap_part1_Func(){
 			sgdisk     -n3:0:0      -t3:BF00 /dev/disk/by-id/"${diskidnum}"
 		
 		done < /tmp/diskid_check_"${pool}".txt
+		partprobe
 		sleep 2
 	}
 	partitionsFunc
