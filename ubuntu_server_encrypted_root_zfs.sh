@@ -468,6 +468,7 @@ debootstrap_part1_Func(){
 			sgdisk     -n3:0:0      -t3:BF00 /dev/disk/by-id/"${diskidnum}"
 		
 		done < /tmp/diskid_check_"${pool}".txt
+		partprobe
 		sleep 2
 	}
 	partitionsFunc
@@ -954,6 +955,7 @@ systemsetupFunc_part3(){
 		fi
 
 		echo "Creating FAT32 filesystem in EFI partition of disk ${diskidnum}. ESP mountpoint is ${esp_mount}"
+		umount -q /dev/disk/by-id/"${diskidnum}"-part1 || true
 		mkdosfs -F 32 -s 1 -n EFI /dev/disk/by-id/"${diskidnum}"-part1
 		sleep 2
 		blkid_part1=""
