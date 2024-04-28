@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2023-11-11
+##Script date: 2024-04-28
 
 set -euo pipefail
 #set -x
@@ -421,7 +421,8 @@ debootstrap_part1_Func(){
 
 	##Clear partition table
 	clear_partition_table "root"
-	sleep 2
+	partprobe
+	#sleep 2
 
 	##Partition disk
 	partitionsFunc(){
@@ -469,7 +470,7 @@ debootstrap_part1_Func(){
 		
 		done < /tmp/diskid_check_"${pool}".txt
 		partprobe
-		sleep 2
+		#sleep 2
 	}
 	partitionsFunc
 }
@@ -555,7 +556,9 @@ debootstrap_createzfspools_Func(){
 		##zfsbootmenu setup for no separate boot pool
 		##https://github.com/zbm-dev/zfsbootmenu/wiki/Debian-Buster-installation-with-ESP-on-the-zpool-disk
 		
-		sleep 2
+		partprobe
+		#sleep 2
+		
 		##Create filesystem datasets to act as containers
 		zfs create -o canmount=off -o mountpoint=none "$RPOOL"/ROOT 
 					
@@ -957,7 +960,8 @@ systemsetupFunc_part3(){
 		echo "Creating FAT32 filesystem in EFI partition of disk ${diskidnum}. ESP mountpoint is ${esp_mount}"
 		umount -q /dev/disk/by-id/"${diskidnum}"-part1 || true
 		mkdosfs -F 32 -s 1 -n EFI /dev/disk/by-id/"${diskidnum}"-part1
-		sleep 2
+		partprobe
+		#sleep 2
 		blkid_part1=""
 		blkid_part1="$(blkid -s UUID -o value /dev/disk/by-id/"${diskidnum}"-part1)"
 		echo "$blkid_part1" >> /tmp/esp_partition_list_uuid.txt
@@ -1614,7 +1618,8 @@ createdatapool(){
 	
 	##Clear partition table
 	clear_partition_table "data"
-	sleep 2
+	partprobe
+	#sleep 2
 	
 	##Create pool mount point
 	if [ -d "$datapoolmount" ]; then
