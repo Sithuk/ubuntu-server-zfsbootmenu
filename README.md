@@ -5,11 +5,11 @@ This script creates an Ubuntu installation using the ZFS filesystem. The install
 Snapshots allow you to rollback your system to a previous state if there is a problem. The system automatically creates snapshots on a timer and also when the system is updated with apt. Snapshots are pruned over time to keep fewer older snapshots.
 
 Supports:
-- Ubuntu 22.04.
+- Ubuntu 22.04, 24.04.
 - Root filesystem on ZFS.
 - Choose from: Ubuntu Server, Ubuntu Desktop, Kubuntu, Xubuntu, Budgie, and Ubuntu MATE.
 - Single, mirror, raid0, raidz1, raidz2, and raidz3 topologies.
-- Native ZFS encryption.
+- LUKS and native ZFS encryption.
 - Remote unlocking of encrypted pools at boot over SSH.
 - Automated system snapshots taken on a timer and also on system updates. 
 - Remote rollback of snapshots at boot for system recovery over SSH.
@@ -75,7 +75,7 @@ Additional guidance and notes can be found in the script.
    
      Pyznap is not included as a package in the ubuntu repos at present. It may need to be re-compiled and re-installed. You can reference the install script for the relevant code to re-compile and re-install. 
 
-4. How do I change the encrypted root password?
+4. How do I change the password on a natively encrypted zfs root pool?
 
    You can change the password of your encrypted root as follows. Change "rpool" to the name of your root pool.
       - Update root pool password file.
