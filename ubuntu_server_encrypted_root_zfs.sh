@@ -1,7 +1,9 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2024-04-28
+##Script date: 2024-05-11
+
+# shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
 set -euo pipefail
 #set -x
@@ -33,12 +35,13 @@ set -euo pipefail
 ##zfs mount -a #Mount all datasets.
 
 ##Variables:
-ubuntuver="jammy" #Ubuntu release to install. "jammy" (22.04).
+ubuntuver="noble" #Ubuntu release to install. "jammy" (22.04). "noble" (24.04).
 distro_variant="server" #Ubuntu variant to install. "server" (Ubuntu server; cli only.) "desktop" (Default Ubuntu desktop install). "kubuntu" (KDE plasma desktop variant). "xubuntu" (Xfce desktop variant). "budgie" (Budgie desktop variant). "MATE" (MATE desktop variant).
 user="testuser" #Username for new install.
 PASSWORD="testuser" #Password for user in new install.
 hostname="ubuntu" #Name to identify the main system on the network. An underscore is DNS non-compliant.
 zfs_root_password="testtest" #Password for encrypted root pool. Minimum 8 characters. "" for no password encrypted protection. Unlocking root pool also unlocks data pool, unless the root pool has no password protection, then a separate data pool password can be set below.
+zfs_root_encrypt="native" #Encryption type. "native" for native zfs encryption. "luks" for luks. Required if there is a root pool password, otherwise ignored.
 locale="en_GB.UTF-8" #New install language setting.
 timezone="Europe/London" #New install timezone setting.
 zfs_rpool_ashift="12" #Drive setting for zfs pool. ashift=9 means 512B sectors (used by all ancient drives), ashift=12 means 4KiB sectors (used by most modern hard drives), and ashift=13 means 8KiB sectors (used by some modern SSDs).
@@ -52,6 +55,7 @@ datapool="datapool" #Non-root drive data pool name.
 topology_data="single" #"single", "mirror", "raid0", "raidz1", "raidz2", or "raidz3" topology on data pool.
 disks_data="1" #Number of disks in array for data pool. Not used with single topology.
 zfs_data_password="testtest" #If no root pool password is set, a data pool password can be set here. Minimum 8 characters. "" for no password protection.
+zfs_data_encrypt="native" #Encryption type. "native" for native zfs encryption. "luks" for luks. Required if there is a data pool password, otherwise ignored.
 datapoolmount="/mnt/$datapool" #Non-root drive data pool mount point in new install.
 zfs_dpool_ashift="12" #See notes for rpool ashift. If ashift is set too low, a significant read/write penalty is incurred. Virtually no penalty if set higher.
 zfs_compression="zstd" #"lz4" is the zfs default; "zstd" may offer better compression at a cost of higher cpu usage.
@@ -69,6 +73,7 @@ remoteaccess_hostname="zbm" #Name to identify the zfsbootmenu system on the netw
 remoteaccess_ip_config="dhcp" #"dhcp", "dhcp,dhcp6", "dhcp6", or "static". Automatic (dhcp) or static IP assignment for zfsbootmenu remote access.
 remoteaccess_ip="192.168.0.222" #Remote access static IP address to connect to ZFSBootMenu. Not used for automatic IP configuration.
 remoteaccess_netmask="255.255.255.0" #Remote access subnet mask. Not used for "dhcp" automatic IP configuration.
+mirror_archive="yes" #"yes" will select the fastest mirror archive to source packages. "no" to use the default archive.
 install_warning_level="PRIORITY=critical" #"PRIORITY=critical", or "FRONTEND=noninteractive". Pause install to show critical messages only or do not pause (noninteractive). Script still pauses for keyboard selection at the end.
 extra_programs="no" #"yes", or "no". Install additional programs if not included in the ubuntu distro package. Programs: cifs-utils, locate, man-db, openssh-server, tldr.
 
@@ -86,6 +91,17 @@ else
    exit 1
 fi
 
+##Check encryption defined if password defined
+if [ -n "$zfs_root_password" ];
+then	
+	if [ -z $zfs_root_encrypt ];
+	then
+		echo "Password entered but no encryption method defined. Please define the zfs_root_encrypt variable."
+	else true
+	fi
+else true
+fi
+
 ##Functions
 live_desktop_check(){
 	##Check for live desktop environment
@@ -94,7 +110,7 @@ live_desktop_check(){
 		echo "Desktop environment test passed."
 		if grep casper /proc/cmdline >/dev/null 2>&1;
 		then
-			echo "Live environment test passed."
+			echo "Live environment present."
 		else
 			echo "Live environment test failed. Run script from a live desktop environment."
 			exit 1
@@ -103,10 +119,25 @@ live_desktop_check(){
 		echo "Desktop environment test failed. Run script from a live desktop environment."
 		exit 1
 	fi
+
+	##Check live desktop version
+	live_desktop_version="$( . /etc/os-release && echo ${VERSION_CODENAME} )"
+	if [ $(echo "${live_desktop_version}" | tr '[:upper:]' '[:lower:]') = $(echo "${ubuntuver}" | tr '[:upper:]' '[:lower:]') ];
+	then
+		echo "Live environment version test passed."
+	else
+		##The zfs pool will be created with the zfs version of the live environment.
+		##If the zfs version is older in the distro to be installed than in the live environment then zfsbootmenu may be unable to mount the root pool at boot.
+		##The system will then fail to load. The reason is that Zfsbootmenu is installed with the zfs version in the distro to be installed, not the version in the live environment.
+		echo "Live environment version test failed."
+		echo "The live environment version does not match the Ubuntu version to be installed. Re-run script from an environment which matches the version to be installed. This is to avoid zfs version conflicts."
+		exit 1
+	fi
+
 }
 
 topology_min_disk_check(){
-	##Check that number of disks meets minimum number for selected topology.
+	##Check that number of disks meets minimum number for selected topology. Disks_{root,data} variable ignored for single topology.
 	pool="$1"
 	echo "Checking script variables for $pool pool..."
 	
@@ -312,8 +343,6 @@ ipv6_apt_live_iso_fix(){
 
 activate_mirror(){
 	##Identify and use fastest mirror.
-	ubuntu_original="$(grep -v '^ *#\|security\|cdrom' /etc/apt/sources.list.bak | sed '/^[[:space:]]*$/d' | awk '{ print $2 }' | sort -u | head -n 1)"
-	
 	echo "Choosing fastest up-to-date ubuntu mirror based on download speed."
 	apt update
 	apt install -y curl
@@ -332,7 +361,8 @@ activate_mirror(){
 	else
 		if [ "${ubuntu_original}" != "${ubuntu_mirror}" ];
 		then
-			sed -i "s,${ubuntu_original},${ubuntu_mirror},g" /etc/apt/sources.list
+			cp "${apt_data_sources_loc}" "${apt_data_sources_loc}".bak
+			sed -i "s,${ubuntu_original},${ubuntu_mirror},g" "${apt_data_sources_loc}"
 			echo "Selected '${ubuntu_mirror}'."
 		else
 			echo "Identified mirror is already selected. No changes made."
@@ -340,26 +370,47 @@ activate_mirror(){
 	fi
 }
 
-reinstate_non_mirror(){
-	mv ${mountpoint}/etc/apt/sources.list.non-mirror ${mountpoint}/etc/apt/sources.list ##Reinstate non-mirror package sources in new install.
-}
-
 apt_sources(){
 	source_archive="$1"
-	sources_list="$2"
-	cat > "${sources_list}" <<-EOLIST
-		deb ${source_archive} $ubuntuver main universe restricted multiverse
-		#deb-src ${source_archive} $ubuntuver main universe restricted multiverse
-		
-		deb ${source_archive} $ubuntuver-updates main universe restricted multiverse
-		#deb-src ${source_archive} $ubuntuver-updates main universe restricted multiverse
-		
-		deb ${source_archive} $ubuntuver-backports main universe restricted multiverse
-		#deb-src ${source_archive} $ubuntuver-backports main universe restricted multiverse
-		
-		deb http://security.ubuntu.com/ubuntu $ubuntuver-security main universe restricted multiverse
-		#deb-src http://security.ubuntu.com/ubuntu $ubuntuver-security main universe restricted multiverse
-	EOLIST
+
+	if [ -f "$mountpoint"/etc/apt/sources.list.d/ubuntu.sources ];
+	then
+		sources_list="$mountpoint"/etc/apt/sources.list.d/ubuntu.sources
+		cp "${sources_list}" "${sources_list}".bak
+		sed -i 's,${ubuntu_original},${source_archive},g' "${sources_list}"
+	else
+		sources_list="$mountpoint"/etc/apt/sources.list
+		cp "${sources_list}" "${sources_list}".bak
+		cat > "${sources_list}" <<-EOLIST
+			deb ${source_archive} $ubuntuver main universe restricted multiverse
+			#deb-src ${source_archive} $ubuntuver main universe restricted multiverse
+			
+			deb ${source_archive} $ubuntuver-updates main universe restricted multiverse
+			#deb-src ${source_archive} $ubuntuver-updates main universe restricted multiverse
+			
+			deb ${source_archive} $ubuntuver-backports main universe restricted multiverse
+			#deb-src ${source_archive} $ubuntuver-backports main universe restricted multiverse
+			
+			deb http://security.ubuntu.com/ubuntu $ubuntuver-security main universe restricted multiverse
+			#deb-src http://security.ubuntu.com/ubuntu $ubuntuver-security main universe restricted multiverse
+		EOLIST
+	fi
+}
+
+reinstate_apt(){
+	if [ "${mirror_archive}" = "yes" ];
+	then
+		cp "${sources_list}" "$mountpoint"/tmp/
+		sed -i "s,${source_archive},${ubuntu_original},g" "${sources_list}"
+		mv "${sources_list}".bak "$mountpoint"/tmp/
+	else true
+	fi
+
+	if [ -f ${mountpoint}/etc/apt/apt.conf.d/30apt_error_on_transient ];
+	then
+		mv ${mountpoint}/etc/apt/apt.conf.d/30apt_error_on_transient ${mountpoint}/tmp/ ##Remove apt update error on transient in new install.
+	else true
+	fi
 }
 
 logcopy(){
@@ -390,20 +441,298 @@ script_copy(){
 	fi
 }
 
+create_zpool_Func(){
+		
+	##Create zfs pool
+	pool=$1 ##root, data
+	
+	##Set pool variables
+	case "$pool" in
+	root)
+		ashift="$zfs_rpool_ashift"
+		keylocation="prompt"
+		zpool_password="$zfs_root_password"
+		zpool_encrypt="$zfs_root_encrypt"
+		zpool_partition="-part3"
+		zpool_name="$RPOOL"
+		topology_pool="${topology_root}"
+	;;
+	
+	data)
+		ashift="$zfs_dpool_ashift"
+		
+		if [ -n "$zfs_root_password" ];
+		then
+			##Set data pool key to use rpool key for single unlock at boot. So data pool uses the same password as the root pool.
+			case "$zfs_root_encrypt" in
+				native)
+					datapool_keyloc="/etc/zfs/$RPOOL.key"
+				;;
+				luks)
+					datapool_keyloc="/etc/cryptsetup-keys.d/$RPOOL.key"
+				;;
+			esac
+			keylocation="file://$datapool_keyloc"
+		else
+			if [ -n "$zfs_data_password" ];
+			then
+				keylocation="prompt"
+			else
+				true
+			fi
+		fi
+		
+		zpool_password="$zfs_data_password"
+		zpool_encrypt="$zfs_data_encrypt"
+		zpool_partition=""
+		zpool_name="$datapool"
+		topology_pool="${topology_data}"
+	;;
+	esac
+	
+	zpool_create_temp="/tmp/${pool}_creation.sh"
+	cat > "$zpool_create_temp" <<-EOF
+		zpool create -f \\
+			-o ashift="$ashift" \\
+			-o autotrim=on \\
+			-O acltype=posixacl \\
+			-O compression=$zfs_compression \\
+			-O normalization=formD \\
+			-O relatime=on \\
+			-O dnodesize=auto \\
+			-O xattr=sa \\
+	EOF
+
+	case "$pool" in
+	root)
+		echo -O canmount=off \\ >> "$zpool_create_temp"
+	;;
+	esac
+
+	if [ -n "$zpool_password" ];
+	then
+		case "$zpool_encrypt" in
+			native)
+				echo "-O encryption=aes-256-gcm -O keylocation=$keylocation -O keyformat=passphrase \\" >> "$zpool_create_temp"
+			;;
+		esac
+	else
+		true
+	fi	
+	
+	case "$pool" in
+	root)
+		echo "-O mountpoint=/ -R $mountpoint \\" >> "$zpool_create_temp"
+	;;
+	data)
+		echo "-O mountpoint=$datapoolmount \\" >> "$zpool_create_temp"
+	;;
+	esac
+
+
+	add_zpool_disks(){
+		
+		loop_counter="$(mktemp)"
+		echo 1 > "$loop_counter" ##Assign starting counter value.
+		
+		while IFS= read -r diskidnum;
+		do
+			if [ -n "$zpool_password" ];
+			then
+				
+				case "$zpool_encrypt" in
+				
+					native)
+						echo "/dev/disk/by-id/${diskidnum}${zpool_partition} \\" >> "$zpool_create_temp"
+					;;
+
+					luks)
+						echo -e "$zpool_password" | cryptsetup -q luksFormat -c aes-xts-plain64 -s 512 -h sha256 /dev/disk/by-id/${diskidnum}${zpool_partition}
+						
+						i="$(cat "$loop_counter")"
+						echo "$i"
+						luks_dmname_base=luks
+						luks_dmname=${luks_dmname_base}$i
+						
+						##Check for luks device name conflict
+						while [ $(find /dev/mapper -name ${luks_dmname} | wc -l) = 1 ];
+						do
+							i=$((i + 1)) ##Increment counter.
+							luks_dmname=${luks_dmname_base}$i
+						done
+						
+						echo -e "$zpool_password" | cryptsetup luksOpen /dev/disk/by-id/${diskidnum}${zpool_partition} "${luks_dmname}"
+						printf "%s\n" "${luks_dmname}" >> /tmp/luks_dmname_"${pool}".txt
+						
+						echo "/dev/mapper/${luks_dmname} \\" >> "$zpool_create_temp"
+						
+						i=$((i + 1)) ##Increment counter.
+						echo "$i" > "$loop_counter"
+					;;
+
+					*)
+						echo "zpool_encrypt variable not recognised."
+						exit 1
+					;;
+				
+				esac
+		
+			else
+				true
+			fi
+		
+		done < /tmp/diskid_check_"$pool".txt
+	
+		sed -i '$s,\\,,' "$zpool_create_temp" ##Remove escape character at end of file.
+	}
+
+
+	case "${topology_pool}" in
+		single|raid0)
+			echo "${zpool_name} \\" >> "$zpool_create_temp"	
+			add_zpool_disks
+		;;
+
+		mirror)
+			echo "${zpool_name} mirror \\" >> "$zpool_create_temp"
+			add_zpool_disks
+		;;
+		
+		raidz1)
+			echo "${zpool_name} raidz1 \\" >> "$zpool_create_temp"
+			add_zpool_disks	
+		;;
+
+		raidz2)
+			echo "${zpool_name} raidz2 \\" >> "$zpool_create_temp"
+			add_zpool_disks	
+		;;
+
+		raidz3)
+			echo "${zpool_name} raidz3 \\" >> "$zpool_create_temp"
+			add_zpool_disks	
+		;;
+
+		*)
+			echo "Pool topology not recognised. Check pool topology variable."
+			exit 1
+		;;
+
+	esac
+	
+	echo "$zpool_password" | sh "$zpool_create_temp" 
+}
+
+update_crypttab_Func(){
+	##Auto unlock using crypttab and keyfile
+	
+	script_env=$1 ##chroot, base
+	pool=$2 ##root, data	
+		
+	cat <<-EOH >/tmp/update_crypttab_$pool.sh
+		
+		##Set pool variables
+		case "$pool" in
+		root)
+			zpool_password="$zfs_root_password"
+			zpool_partition="-part3"
+			crypttab_parameters="luks,discard,initramfs"
+		;;
+		
+		data)
+			zpool_password="$zfs_data_password"
+			zpool_partition=""
+			crypttab_parameters="luks,discard"
+		;;
+		esac
+		
+		apt install -y cryptsetup
+							
+		loop_counter="\$(mktemp)"
+		echo 1 > "\${loop_counter}" ##Assign starting counter value.
+		
+		while IFS= read -r diskidnum;
+		do
+			i="\$(cat "\$loop_counter")"
+			echo "\$i"
+			luks_dmname="\$(sed "\${i}q;d" /tmp/luks_dmname_"${pool}".txt)"
+			
+			blkid_luks="\$(blkid -s UUID -o value /dev/disk/by-id/\${diskidnum}\${zpool_partition})"
+			
+			echo "\${zpool_password}" | cryptsetup -v luksAddKey /dev/disk/by-uuid/\${blkid_luks} /etc/cryptsetup-keys.d/$RPOOL.key
+			cryptsetup luksDump /dev/disk/by-uuid/\${blkid_luks}
+			
+			##https://cryptsetup-team.pages.debian.net/cryptsetup/README.initramfs.html
+			echo \${luks_dmname} UUID=\${blkid_luks} /etc/cryptsetup-keys.d/$RPOOL.key \${crypttab_parameters} >> /etc/crypttab
+			
+			i=\$((i + 1)) ##Increment counter.
+			echo "\$i" > "\$loop_counter"
+			
+		done < /tmp/diskid_check_"${pool}".txt
+		
+		##https://cryptsetup-team.pages.debian.net/cryptsetup/README.initramfs.html
+		sed -i 's,#KEYFILE_PATTERN=,KEYFILE_PATTERN="/etc/cryptsetup-keys.d/*.key",' /etc/cryptsetup-initramfs/conf-hook
+
+	EOH
+
+	case "${script_env}" in
+	chroot)
+		cp /tmp/diskid_check_"${pool}".txt "$mountpoint"/tmp
+		cp /tmp/update_crypttab_${pool}.sh "$mountpoint"/tmp
+		chroot "$mountpoint" /bin/bash -x /tmp/update_crypttab_$pool.sh
+	;;
+	base)
+		##Test for live environment.
+		if grep casper /proc/cmdline >/dev/null 2>&1;
+		then
+			echo "Live environment present. Reboot into new installation."
+			exit 1
+		else	
+			/bin/bash /tmp/update_crypttab_$pool.sh
+		fi
+	;;
+	*)
+		exit 1
+	;;
+	esac
+
+}
+
 debootstrap_part1_Func(){
 	export DEBIAN_"${install_warning_level}"
 	
+	##Error out script on apt update error such as network failure during package download.
+	##https://bugs.launchpad.net/ubuntu/+source/apt/+bug/1693900
+	cat > /etc/apt/apt.conf.d/30apt_error_on_transient <<-EOF
+		APT::Update::Error-Mode "any";
+	EOF
+	
 	update_live_iso_data_sources(){
-		cp /etc/apt/sources.list /etc/apt/sources.list.bak
-		activate_mirror	
+		if [ -f /etc/apt/sources.list.d/ubuntu.sources ];
+		then
+			apt_data_sources_loc="/etc/apt/sources.list.d/ubuntu.sources"
+		else
+			apt_data_sources_loc="/etc/apt/sources.list"
+		fi
 
-		#sed -i 's,deb http://security,#deb http://security,' /etc/apt/sources.list ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
+		##Identify live iso default archive
+		#ubuntu_original="$(grep -v '^ *#\|security\|cdrom\|.*gpg' "${apt_data_sources_loc}".bak | sed '/^[[:space:]]*$/d' | awk '{ print $2 }' | sort -u | grep ubuntu)"
+		ubuntu_original="http://archive.ubuntu.com/ubuntu"
 		
-		cat /etc/apt/sources.list
-		trap 'printf "%s\n%s" "The script has experienced an error during the first apt update. That may have been caused by a queried server not responding in time. Try running the script again." "If the issue is the security server not responding, then comment out the security server in the /etc/apt/sources.list. Alternatively, you can uncomment the command that does this in the install script. This affects the temporary live iso only. Not the permanent installation."' ERR
+		if [ "${mirror_archive}" = "yes" ];
+		then
+			activate_mirror	
+		else
+			true
+		fi
+
+		#sed -i 's,deb http://security,#deb http://security,' "${apt_data_sources_loc}" ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
+		
+		cat "${apt_data_sources_loc}"
+		trap 'printf "%s\n%s" "The script has experienced an error during the first apt update. That may have been caused by a queried server not responding in time. Try running the script again." "If the issue is the security server not responding, then comment out the security server in the "${apt_data_sources_loc}". Alternatively, you can uncomment the command that does this in the install script. This affects the temporary live iso only. Not the permanent installation."' ERR
 		apt update
 		trap - ERR	##Resets the trap to doing nothing when the script experiences an error. The script will still exit on error if "set -e" is set.
-		}
+	}
 	update_live_iso_data_sources	
 
 	ssh_Func(){
@@ -434,6 +763,7 @@ debootstrap_part1_Func(){
 		##BF01 Solaris /usr & Mac Z
 		##8200 Linux swap
 		##8300 Linux file system
+		##8309 Linux LUKS
 		##FD00 Linux RAID
 
 		case "$topology_root" in
@@ -446,27 +776,46 @@ debootstrap_part1_Func(){
 			;;
 
 			*)
-				echo ""
+				echo "topology_root variable not recognised."
 				exit 1
 			;;
 		esac
+		
+		if [ -n "$zfs_root_password" ];
+		then
+			case "$zfs_root_encrypt" in
+				native)
+					root_hex_code="BF00" ##ZFS native encryption
+				;;
+
+				luks)
+					root_hex_code="FD00" ##luks
+				;;
+
+				*)
+					echo "zfs_root_encrypt variable not recognised."
+					exit 1
+				;;
+			esac
+		else
+			root_hex_code="BF00" ##unencrypted ZFS
+		fi
 		
 		while IFS= read -r diskidnum;
 		do
 			echo "Creating partitions on disk ${diskidnum}."
 			##2.3 create bootloader partition
-			sgdisk -n1:1M:+"$EFI_boot_size"M -t1:EF00 /dev/disk/by-id/"${diskidnum}"
+			sgdisk -n1:1M:+"${EFI_boot_size}"M -t1:EF00 /dev/disk/by-id/"${diskidnum}"
 		
 			##2.4 create swap partition 
 			##bug with swap on zfs zvol so use swap on partition:
 			##https://github.com/zfsonlinux/zfs/issues/7734
 			##hibernate needs swap at least same size as RAM
 			##hibernate only works with unencrypted installs
-			sgdisk -n2:0:+"$swap_size"M -t2:"$swap_hex_code" /dev/disk/by-id/"${diskidnum}"
+			sgdisk -n2:0:+"${swap_size}"M -t2:"${swap_hex_code}" /dev/disk/by-id/"${diskidnum}"
 		
 			##2.6 Create root pool partition
-			##Unencrypted or ZFS native encryption:
-			sgdisk     -n3:0:0      -t3:BF00 /dev/disk/by-id/"${diskidnum}"
+			sgdisk     -n3:0:0      -t3:"${root_hex_code}" /dev/disk/by-id/"${diskidnum}"
 		
 		done < /tmp/diskid_check_"${pool}".txt
 		partprobe
@@ -477,78 +826,8 @@ debootstrap_part1_Func(){
 
 debootstrap_createzfspools_Func(){
 
-	create_rpool_Func(){
-		##Create root pool
-		
-		zpool_create_temp="/tmp/${RPOOL}_creation.sh"
-		cat > "$zpool_create_temp" <<-EOF
-			zpool create -f \\
-				-o ashift=$zfs_rpool_ashift \\
-				-o autotrim=on \\
-				-O acltype=posixacl \\
-				-O canmount=off \\
-				-O compression=$zfs_compression \\
-				-O dnodesize=auto \\
-				-O normalization=formD \\
-				-O relatime=on \\
-				-O xattr=sa \\
-		EOF
-	
-		if [ -n "$zfs_root_password" ];
-		then
-			echo "-O encryption=aes-256-gcm -O keylocation=prompt -O keyformat=passphrase \\" >> "$zpool_create_temp"
-		else
-			true
-		fi	
-		
-		echo "-O mountpoint=/ -R $mountpoint \\" >> "$zpool_create_temp"
-
-		add_zpool_disks(){
-			while IFS= read -r diskidnum;
-			do
-				echo "/dev/disk/by-id/${diskidnum}-part3 \\" >> "$zpool_create_temp"
-			done < /tmp/diskid_check_root.txt
-		
-			sed -i '$s,\\,,' "$zpool_create_temp" ##Remove escape character at end of file.
-		}
-
-
-		case "$topology_root" in
-			single|raid0)
-				echo "$RPOOL \\" >> "$zpool_create_temp"	
-				add_zpool_disks
-			;;
-
-			mirror)
-				echo "$RPOOL mirror \\" >> "$zpool_create_temp"
-				add_zpool_disks
-			;;
-			
-			raidz1)
-				echo "$RPOOL raidz1 \\" >> "$zpool_create_temp"
-				add_zpool_disks	
-			;;
-
-			raidz2)
-				echo "$RPOOL raidz2 \\" >> "$zpool_create_temp"
-				add_zpool_disks	
-			;;
-
-			raidz3)
-				echo "$RPOOL raidz3 \\" >> "$zpool_create_temp"
-				add_zpool_disks	
-			;;
-
-			*)
-				echo "Pool topology not recognised. Check pool topology variable."
-				exit 1
-			;;
-
-		esac
-		
-	}
-	create_rpool_Func
-	echo -e "$zfs_root_password" | sh "$zpool_create_temp" 
+	##Create root pool
+	create_zpool_Func root
 	
 	##System installation
 	mountpointsFunc(){
@@ -558,7 +837,7 @@ debootstrap_createzfspools_Func(){
 		
 		partprobe
 		#sleep 2
-		
+
 		##Create filesystem datasets to act as containers
 		zfs create -o canmount=off -o mountpoint=none "$RPOOL"/ROOT 
 					
@@ -659,14 +938,24 @@ zfsbootmenu_install_config_Func(){
 				dracut-core \\
 				fzf
 
+			apt-get install --yes curl
+			
 			mkdir -p /usr/local/src/zfsbootmenu
 			cd /usr/local/src/zfsbootmenu
 
-			##Download the latest zfsbootmenu source
-			apt-get install --yes curl
-			#latest_zbm_source="https://get.zfsbootmenu.org/source" #Source code from zfsbootmenu website.
-			latest_zbm_source="$(curl -s https://api.github.com/repos/zbm-dev/zfsbootmenu/releases/latest | grep tarball | cut -d : -f 2,3 | tr -d \"|sed 's/^[ \t]*//'|sed 's/,//')"
-			curl -L "\${latest_zbm_source-default}" | tar -zxv --strip-components=1 -f -
+			##Download the latest zfsbootmenu git master
+			download_zbm_git_master(){
+				git clone https://github.com/zbm-dev/zfsbootmenu .
+			}
+			
+			##Download the latest zbm release
+			download_zbm_release(){
+				#latest_zbm_source="https://get.zfsbootmenu.org/source" #Source code from zfsbootmenu website.
+				latest_zbm_source="\$(curl -s https://api.github.com/repos/zbm-dev/zfsbootmenu/releases/latest | grep tarball | cut -d : -f 2,3 | tr -d \"|sed 's/^[ \t]*//'|sed 's/,//')"
+				curl -L "\${latest_zbm_source-default}" | tar -zxv --strip-components=1 -f -
+			}
+			download_zbm_git_master
+			#download_zbm_release
 
 			make core dracut ##"make install" installs mkinitcpio, not needed.
 
@@ -686,6 +975,33 @@ zfsbootmenu_install_config_Func(){
 			if [ "$quiet_boot" = "no" ]; then
 				sed -i 's,ro quiet,ro,' /etc/zfsbootmenu/config.yaml
 			fi
+			
+			if [ -n "$zfs_root_password" ];
+			then
+				case "$zfs_root_encrypt" in
+					luks)
+						##https://github.com/agorgl/zbm-luks-unlock
+						zfsbootmenu_hook_root=/etc/zfsbootmenu/hooks ##https://docs.zfsbootmenu.org/en/v2.3.x/man/zfsbootmenu.7.html
+						
+						mkdir -p \${zfsbootmenu_hook_root}/early-setup.d
+						cd \${zfsbootmenu_hook_root}/early-setup.d
+						curl -L -O https://raw.githubusercontent.com/agorgl/zbm-luks-unlock/master/hooks/early-setup.d/luks-unlock.sh
+						chmod +x \${zfsbootmenu_hook_root}/early-setup.d/luks-unlock.sh
+						
+						#mkdir -p \${zfsbootmenu_hook_root}/boot-sel.d
+						#cd \${zfsbootmenu_hook_root}/boot-sel.d
+						#curl -L -O https://raw.githubusercontent.com/agorgl/zbm-luks-unlock/master/hooks/boot-sel.d/initramfs-inject.sh
+						#chmod +x \${zfsbootmenu_hook_root}/early-setup.d/initramfs-inject.sh
+						
+						cd /etc/zfsbootmenu/dracut.conf.d/
+						curl -L -O https://raw.githubusercontent.com/agorgl/zbm-luks-unlock/master/dracut.conf.d/99-crypt.conf
+					;;
+				esac
+			else
+				true
+			fi	
+			
+			
 		}
 		config_zbm
 
@@ -717,7 +1033,8 @@ remote_zbm_access_Func(){
 		##https://github.com/zbm-dev/zfsbootmenu/wiki/Remote-Access-to-ZBM
 		apt update
 		apt install -y dracut-network dropbear
-		
+		apt install -y isc-dhcp-client
+
 		config_dracut_crypt_ssh_module(){
 			git -C /tmp clone 'https://github.com/dracut-crypt-ssh/dracut-crypt-ssh.git'
 			mkdir /usr/lib/dracut/modules.d/60crypt-ssh
@@ -764,7 +1081,7 @@ remote_zbm_access_Func(){
 		add_welcome_message(){
 			##add remote session welcome message
 			cat <<-EOF >/etc/zfsbootmenu/dracut.conf.d/banner.txt
-				Welcome to the ZFSBootMenu initramfs shell. Enter "zbm" to start ZFSBootMenu.
+				Welcome to the ZFSBootMenu initramfs shell. Enter "zfsbootmenu" or "zbm" to start ZFSBootMenu.
 			EOF
 			chmod 755 /etc/zfsbootmenu/dracut.conf.d/banner.txt
 			
@@ -849,6 +1166,19 @@ remote_zbm_access_Func(){
 			exit 1
 		else	
 			/bin/bash /tmp/remote_zbm_access.sh
+
+			sed -i 's,#dropbear_acl,dropbear_acl,' /etc/zfsbootmenu/dracut.conf.d/dropbear.conf
+			mkdir -p /home/"$user"/.ssh
+			chown "$user":"$user" /home/"$user"/.ssh
+			touch /home/"$user"/.ssh/authorized_keys
+			chmod 644 /home/"$user"/.ssh/authorized_keys
+			chown "$user":"$user" /home/"$user"/.ssh/authorized_keys
+			#hostname -I
+			echo "Zfsbootmenu remote access installed. Connect as root on port 222 during boot: \"ssh root@{IP_ADDRESS or FQDN of zfsbootmenu} -p 222\""
+			echo "Your SSH public key must be placed in \"/home/$user/.ssh/authorized_keys\" prior to reboot or remote access will not work."
+			echo "You can add your remote user key using the following command from the remote user's terminal if openssh-server is active on the host."
+			echo "\"ssh-copy-id -i ~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}\""
+			echo "Run \"sudo generate-zbm\" after copying across the remote user's public ssh key into the authorized_keys file."
 		fi
 	;;
 	*)
@@ -865,6 +1195,9 @@ systemsetupFunc_part1(){
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		export DEBIAN_"${install_warning_level}"
 	EOCHROOT
+
+	##Error out script on apt update error such as network failure during package download.
+	cp /etc/apt/apt.conf.d/30apt_error_on_transient "$mountpoint"/etc/apt/apt.conf.d/
 
 	##Configure hostname
 	echo "$hostname" > "$mountpoint"/etc/hostname
@@ -891,14 +1224,12 @@ systemsetupFunc_part1(){
 	mount --rbind /sys  "$mountpoint"/sys 
 
 	##Configure package sources
-	apt_sources "${ubuntu_original}" "$mountpoint/etc/apt/sources.list.non-mirror"
-	apt_sources "${ubuntu_mirror}" "$mountpoint/etc/apt/sources.list.mirror"
-	
-	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		##Select mirror package sources
-		cp /etc/apt/sources.list /etc/apt/sources.list.bak
-		cp /etc/apt/sources.list.mirror /etc/apt/sources.list
-	EOCHROOT
+	if [ "${mirror_archive}" = "yes" ];
+	then
+		apt_sources "${ubuntu_mirror}"
+	else
+		apt_sources "${ubuntu_original}"
+	fi
 
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		##4.5 configure basic system
@@ -1008,29 +1339,62 @@ systemsetupFunc_part3(){
 }
 
 systemsetupFunc_part4(){
+	cp /tmp/diskid_check_"${pool}".txt "$mountpoint"/tmp/
+	
+	if [ -f /tmp/luks_dmname_"${pool}".txt ];
+	then
+		cp /tmp/luks_dmname_"${pool}".txt "$mountpoint"/tmp/
+	else true
+	fi
+	
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		rpool_settings(){
+		encrypt_config(){
 			if [ -n "$zfs_root_password" ];
 			then
-				##Convert rpool to use keyfile.
-				echo $zfs_root_password > /etc/zfs/$RPOOL.key ##This file will live inside your initramfs stored on the ZFS boot environment.
-				chmod 600 /etc/zfs/$RPOOL.key ##Set access rights to keyfile.
-				echo "UMASK=0077" > /etc/initramfs-tools/conf.d/umask.conf ##Set access rights for initramfs images generated by mkinitramfs. 
-				zfs change-key -o keylocation=file:///etc/zfs/$RPOOL.key -o keyformat=passphrase $RPOOL
+				case "$zfs_root_encrypt" in
+					native)
+						##Convert rpool to use keyfile.
+						echo $zfs_root_password > /etc/zfs/$RPOOL.key ##This file will live inside your initramfs stored on the ZFS boot environment.
+						chmod 600 /etc/zfs/$RPOOL.key ##Set access rights to keyfile. 
+						
+						zfs change-key -o keylocation=file:///etc/zfs/$RPOOL.key -o keyformat=passphrase $RPOOL
+						
+						##Setup key caching in zfsbootmenu
+						zfs set org.zfsbootmenu:keysource="$RPOOL/ROOT" $RPOOL
+					;;
+					luks)
+						##https://askubuntu.com/questions/996155/how-do-i-automatically-decrypt-an-encrypted-filesystem-on-the-next-reboot
+						
+						mkdir -p /etc/cryptsetup-keys.d/
+						dd if=/dev/urandom of=/etc/cryptsetup-keys.d/$RPOOL.key bs=1024 count=4
+						chmod 600 /etc/cryptsetup-keys.d/$RPOOL.key ##Set access rights to keyfile.
+						
+					;;
+				esac
 				
-				##Setup key caching in zfsbootmenu
-				zfs set org.zfsbootmenu:keysource="$RPOOL/ROOT" $RPOOL
 			else
 				true
-			fi	
-							
+			fi
+			
+			echo "UMASK=0077" > /etc/initramfs-tools/conf.d/umask.conf ##Set access rights for initramfs images generated by mkinitramfs.				
+		
+		}
+		encrypt_config			
+	EOCHROOT
+
+	##Update crypttab if luks used
+	if [ "$zfs_root_encrypt" = "luks" ];
+	then
+		update_crypttab_Func "chroot" "root"
+	else true
+	fi
+
+	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT					
 			if [ "$quiet_boot" = "yes" ]; then
 				zfs set org.zfsbootmenu:commandline="spl_hostid=\$( hostid ) ro quiet" "$RPOOL"/ROOT
 			else
 				zfs set org.zfsbootmenu:commandline="spl_hostid=\$( hostid ) ro" "$RPOOL"/ROOT
 			fi
-		}
-		rpool_settings
 	EOCHROOT
 
 	zfsbootmenu_install_config_Func "chroot"
@@ -1452,7 +1816,8 @@ pyznapinstall(){
 			cd /opt/pyznap
 			virtualenv venv
 			source venv/bin/activate ##enter virtual env
-			pip install pyznap
+				pip install setuptools ##Setuptools not present in virtual environments created with venv. Need to install it.
+				pip install pyznap
 			deactivate ##exit virtual env
 			ln -s /opt/pyznap/venv/bin/pyznap /usr/local/bin/pyznap
 			/opt/pyznap/venv/bin/pyznap setup ##config file created /etc/pyznap/pyznap.conf
@@ -1587,18 +1952,6 @@ setupremoteaccess(){
 	else 
 		disclaimer
 		remote_zbm_access_Func "base"
-		sed -i 's,#dropbear_acl,dropbear_acl,' /etc/zfsbootmenu/dracut.conf.d/dropbear.conf
-		mkdir -p /home/"$user"/.ssh
-		chown "$user":"$user" /home/"$user"/.ssh
-		touch /home/"$user"/.ssh/authorized_keys
-		chmod 644 /home/"$user"/.ssh/authorized_keys
-		chown "$user":"$user" /home/"$user"/.ssh/authorized_keys
-		#hostname -I
-		echo "Zfsbootmenu remote access installed. Connect as root on port 222 during boot: \"ssh root@{IP_ADDRESS or FQDN of zfsbootmenu} -p 222\""
-		echo "Your SSH public key must be placed in \"/home/$user/.ssh/authorized_keys\" prior to reboot or remote access will not work."
-		echo "You can add your remote user key using the following command from the remote user's terminal if openssh-server is active on the host."
-        echo "\"ssh-copy-id -i ~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}\""
-		echo "Run \"sudo generate-zbm\" after copying across the remote user's public ssh key into the authorized_keys file."
 	fi
 }
 
@@ -1609,6 +1962,15 @@ createdatapool(){
 	if [ "$(zpool status "$datapool")" ];
 	then
 		echo "Warning: $datapool already exists. Are you use you want to wipe the drive and destroy $datapool? Press Enter to Continue or CTRL+C to abort."
+		read -r _
+	else
+		echo "$datapool pre-existance check passed."
+	fi
+	
+	##Warning on auto unlock
+	if [ -n "$zfs_data_password" ];
+	then
+		echo "Warning: Encryption selected. If the root pool is also encrypted then the root pool keyfile will be used to auto unlock the data pool at boot. Press Enter to Continue or CTRL+C to abort."
 		read -r _
 	else true
 	fi
@@ -1629,89 +1991,26 @@ createdatapool(){
 		chown "$user":"$user" "$datapoolmount"
 		echo "Data pool mount point created."
 	fi
+	echo "$datapoolmount"
 		
 	##Automount with zfs-mount-generator
 	touch /etc/zfs/zfs-list.cache/"$datapool"
 
 	##Create data pool
-	create_dpool_Func(){
-		echo "$datapoolmount"
-		
-		zpool_create_temp="/tmp/${datapool}_creation.sh"
-		cat > "$zpool_create_temp" <<-EOF
-			zpool create \
-				-o ashift="$zfs_dpool_ashift" \\
-				-O acltype=posixacl \\
-				-O compression="$zfs_compression" \\
-				-O normalization=formD \\
-				-O relatime=on \\
-				-O dnodesize=auto \\
-				-O xattr=sa \\
-		EOF
-
-		if [ -n "$zfs_root_password" ];
+	create_zpool_Func "data"
+	
+	##Update crypttab for autounlock if luks used on root pool
+	if [ "$zfs_data_encrypt" = "luks" ];
+	then
+		if [ -f "/etc/cryptsetup-keys.d/$RPOOL.key" ];
 		then
-			##Set data pool key to use rpool key for single unlock at boot. So data pool uses the same password as the root pool.
-			datapool_keyloc="/etc/zfs/$RPOOL.key"
-			echo "-O encryption=aes-256-gcm -O keylocation=file://$datapool_keyloc -O keyformat=passphrase \\" >> "$zpool_create_temp"
+			update_crypttab_Func "base" "data"
 		else
-			if [ -n "$zfs_data_password" ];
-			then
-				echo "-O encryption=aes-256-gcm -O keylocation=prompt -O keyformat=passphrase \\" >> "$zpool_create_temp"
-			else
-				true
-			fi
-		fi	
-		
-		echo "-O mountpoint=$datapoolmount \\" >> "$zpool_create_temp"
-
-
-		add_zpool_disks(){
-			while IFS= read -r diskidnum;
-			do
-				echo "/dev/disk/by-id/${diskidnum} \\" >> "$zpool_create_temp"
-			done < /tmp/diskid_check_data.txt
-		
-			sed -i '$s,\\,,' "$zpool_create_temp" ##Remove escape character at end of file.
-		}
-
-
-		case "$topology_data" in
-			single|raid0)
-				echo "$datapool \\" >> "$zpool_create_temp"	
-				add_zpool_disks
-			;;
-
-			mirror)
-				echo "$datapool mirror \\" >> "$zpool_create_temp"
-				add_zpool_disks
-			;;
-			
-			raidz1)
-				echo "$datapool raidz1 \\" >> "$zpool_create_temp"
-				add_zpool_disks	
-			;;
-
-			raidz2)
-				echo "$datapool raidz2 \\" >> "$zpool_create_temp"
-				add_zpool_disks	
-			;;
-
-			raidz3)
-				echo "$datapool raidz3 \\" >> "$zpool_create_temp"
-				add_zpool_disks	
-			;;
-
-			*)
-				echo "Pool topology not recognised. Check pool topology variable."
-				exit 1
-			;;
-
-		esac
-		
-	}
-	create_dpool_Func
-	echo -e "$zfs_data_password" | sh "$zpool_create_temp" 
+			echo "$RPOOL.key not found in /etc/cryptsetup-keys.d/."
+			exit 1
+		fi
+	else true
+	fi
 	
 	##Verify that zed updated the cache by making sure the cache file is not empty.
 	cat /etc/zfs/zfs-list.cache/"$datapool"
@@ -1787,15 +2086,28 @@ reinstall-zbm(){
 ##--------
 logFunc
 date
-resettime(){
-	##Manual reset time to correct out of date virtualbox clock
+update_date_time(){
+	##Update time to correct out of date virtualbox clock when using snapshots for testing.
 	timedatectl
-	timedatectl set-ntp off
-	sleep 1
-	timedatectl set-time "2021-01-01 00:00:00"
+
+	manual_set(){
+		timedatectl set-ntp off
+		sleep 1
+		timedatectl set-time "2021-01-01 00:00:00"
+	}
+	#manual_set
+
+	sync_ntp(){
+
+		systemctl restart systemd-timesyncd.service
+		systemctl status systemd-timesyncd.service
+
+	}
+	sync_ntp
+
 	timedatectl
 }
-#resettime
+update_date_time
 
 install(){
 	disclaimer
@@ -1819,7 +2131,7 @@ install(){
 	pyznapinstall #Snapshot management.
 	extra_programs #Install extra programs.
 	logcompress #Disable log compression.
-	reinstate_non_mirror #Reinstate non-mirror package sources in new install.
+	reinstate_apt #Reinstate non-mirror package sources in new install.
 
 	keyboard_console #Configure keyboard and console.
 	script_copy #Copy script to new installation.
