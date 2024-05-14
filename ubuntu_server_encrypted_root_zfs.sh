@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2024-05-11
+##Script date: 2024-05-14
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -578,7 +578,7 @@ create_zpool_Func(){
 				esac
 		
 			else
-				true
+				echo "/dev/disk/by-id/${diskidnum}${zpool_partition} \\" >> "$zpool_create_temp"
 			fi
 		
 		done < /tmp/diskid_check_"$pool".txt
