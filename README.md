@@ -91,6 +91,15 @@ Additional guidance and notes can be found in the script.
 
         `update-initramfs -u -k all`
 
+## Known issues
+1. Why is firefox missing from my desktop install?
+
+   Canonical installs firefox as a snap package, even if using "apt install" to install it. Unfortunately snaps are unable to be installed in a chroot environment. The issue has been raised as a bug:
+
+   https://bugs.launchpad.net/snappy/+bug/1609903
+
+   Missing snap packages can be installed manually following first boot into the new system. 
+
 ## Discussion threads
 Please use the discussions section. \
 https://github.com/Sithuk/ubuntu-server-zfsbootmenu/discussions
