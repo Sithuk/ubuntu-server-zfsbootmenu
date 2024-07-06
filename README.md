@@ -26,10 +26,14 @@ Edit the variables in the ubuntu_server_encrypted_root_zfs.sh file to your prefe
 
 	nano ubuntu_server_encrypted_root_zfs.sh
 	
-Run the "install" option of the script.
+Run the "initial" option of the script.
 
-	./ubuntu_server_encrypted_root_zfs.sh install
-	
+	./ubuntu_server_encrypted_root_zfs.sh initial
+
+Reboot after the initial installation completes and login to the new install. Username and password is as set in the script variables. Then run the second part of the script.
+
+	./ubuntu_server_encrypted_root_zfs.sh postreboot
+
 ## Optional: Remote access during boot
 The script includes an optional feature to provide remote access during boot. Remote access over ssh allows the system state to be rolled back to a previous snapshot without physical access to the system. This is helpful to return a system to a bootable state following a failed upgrade.
 
@@ -90,15 +94,6 @@ Additional guidance and notes can be found in the script.
       - Update initramfs.
 
         `update-initramfs -u -k all`
-
-## Known issues
-1. Why is firefox missing from my desktop install?
-
-   Canonical installs firefox as a snap package, even if using "apt install" to install it. Unfortunately snaps are unable to be installed in a chroot environment. The issue has been raised as a bug:
-
-   https://bugs.launchpad.net/snappy/+bug/1609903
-
-   Missing snap packages can be installed manually following first boot into the new system. 
 
 ## Discussion threads
 Please use the discussions section. \
