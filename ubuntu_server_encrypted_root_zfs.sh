@@ -1,20 +1,23 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2024-05-14
+##Script date: 2024-07-06
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
 set -euo pipefail
 #set -x
 
-##Usage: <script_filename> install | remoteaccess | datapool
+##Usage: <script_filename> initial | postreboot | remoteaccess | datapool
 
-##Run with "install" option from Ubuntu live iso (desktop version) terminal.
+##Script to be run in two parts.
+##Part 1: Run with "initial" option from Ubuntu live iso (desktop version) terminal.
+##Part 2: Reboot into new install.
+##Part 2: Run with "postreboot" option after first boot into new install (login as user/password defined in variable section below). 
 
 ##Remote access can be installed by either:
 ##  setting the remoteaccess variable to "yes" in the variables section below, or
-##  running the script with the "remoteaccess" option after rebooting into the new installation.
+##  running the script with the "remoteaccess" option after part 1 and part 2 are run.
 ##Connect as "root" on port 222 to the server's ip address.
 ##It's better to leave the remoteaccess variable below as "no" and run the script with the "remoteaccess" option
 ##  as that will use the user's authorized_keys file. Setting the remoteaccess variable to "yes" will use root's authorized_keys.
@@ -74,6 +77,7 @@ remoteaccess_ip_config="dhcp" #"dhcp", "dhcp,dhcp6", "dhcp6", or "static". Autom
 remoteaccess_ip="192.168.0.222" #Remote access static IP address to connect to ZFSBootMenu. Not used for automatic IP configuration.
 remoteaccess_netmask="255.255.255.0" #Remote access subnet mask. Not used for "dhcp" automatic IP configuration.
 mirror_archive="yes" #"yes" will select the fastest mirror archive to source packages. "no" to use the default archive.
+ubuntu_original="http://archive.ubuntu.com/ubuntu" #Default ubuntu repository.
 install_warning_level="PRIORITY=critical" #"PRIORITY=critical", or "FRONTEND=noninteractive". Pause install to show critical messages only or do not pause (noninteractive). Script still pauses for keyboard selection at the end.
 extra_programs="no" #"yes", or "no". Install additional programs if not included in the ubuntu distro package. Programs: cifs-utils, locate, man-db, openssh-server, tldr.
 
@@ -341,19 +345,83 @@ ipv6_apt_live_iso_fix(){
 
 }
 
-activate_mirror(){
-	##Identify and use fastest mirror.
-	echo "Choosing fastest up-to-date ubuntu mirror based on download speed."
-	apt update
-	apt install -y curl
-	ubuntu_mirror=$({
-	##Choose mirrors that are up-to-date by checking the Last-Modified header.
-	##https://github.com/actions/runner-images/issues/675#issuecomment-1381837292
-	{
-	curl -s http://mirrors.ubuntu.com/mirrors.txt
-	} | xargs -I {} sh -c 'echo "$(curl -m 5 -sI {}dists/$(lsb_release -c | cut -f2)-security/Contents-$(dpkg --print-architecture).gz | sed s/\\r\$//|grep Last-Modified|awk -F": " "{ print \$2 }" | LANG=C date -f- -u +%s)" "{}"' | sort -rg | awk '{ if (NR==1) TS=$1; if ($1 == TS) print $2 }'
-	} | xargs -I {} sh -c 'echo "$(curl -r 0-102400 -m 5 -s -w %{speed_download} -o /dev/null {}ls-lR.gz)" {}' \
-	| sort -g -r | head -1 | awk '{ print $2  }')
+apt_sources(){
+	##Initial system apt sources config
+	script_env="$1" ##chroot, base
+	source_archive="$2"
+	
+	sources_list=""
+	cat > /tmp/apt_sources.sh <<-EOF
+		#!/bin/sh
+		if [ -f /etc/apt/sources.list.d/ubuntu.sources ];
+		then
+			sources_list=/etc/apt/sources.list.d/ubuntu.sources	
+			if [ "${ubuntu_original}" != "${source_archive}" ];
+			then
+				cp "\${sources_list}" "\${sources_list}".orig
+				sed -i 's,${ubuntu_original},${source_archive},g' "\${sources_list}"
+			else true
+			fi
+		else
+			sources_list=/etc/apt/sources.list
+			cp "\${sources_list}" "\${sources_list}".orig
+			cat > "\${sources_list}" <<-EOLIST
+				deb ${source_archive} $ubuntuver main universe restricted multiverse
+				#deb-src ${source_archive} $ubuntuver main universe restricted multiverse
+				
+				deb ${source_archive} $ubuntuver-updates main universe restricted multiverse
+				#deb-src ${source_archive} $ubuntuver-updates main universe restricted multiverse
+				
+				deb ${source_archive} $ubuntuver-backports main universe restricted multiverse
+				#deb-src ${source_archive} $ubuntuver-backports main universe restricted multiverse
+				
+				deb http://security.ubuntu.com/ubuntu $ubuntuver-security main universe restricted multiverse
+				#deb-src http://security.ubuntu.com/ubuntu $ubuntuver-security main universe restricted multiverse
+			EOLIST
+		fi
+	EOF
+
+	case "${script_env}" in
+	chroot)
+		cp /tmp/apt_sources.sh "$mountpoint"/tmp
+		chroot "$mountpoint" /bin/bash -x /tmp/apt_sources.sh
+	;;
+	base)
+		/bin/bash /tmp/apt_sources.sh
+	;;
+	*)
+		exit 1
+	;;
+	esac
+
+}
+
+apt_mirror_source(){
+	
+	identify_apt_mirror(){
+		##Identify fastest mirror.
+		echo "Choosing fastest up-to-date ubuntu mirror based on download speed."
+		apt update
+		apt install -y curl
+		ubuntu_mirror=$({
+		##Choose mirrors that are up-to-date by checking the Last-Modified header.
+		##https://github.com/actions/runner-images/issues/675#issuecomment-1381837292
+		{
+		curl -s http://mirrors.ubuntu.com/mirrors.txt
+		} | xargs -I {} sh -c 'echo "$(curl -m 5 -sI {}dists/$(lsb_release -c | cut -f2)-security/Contents-$(dpkg --print-architecture).gz | sed s/\\r\$//|grep Last-Modified|awk -F": " "{ print \$2 }" | LANG=C date -f- -u +%s)" "{}"' | sort -rg | awk '{ if (NR==1) TS=$1; if ($1 == TS) print $2 }'
+		} | xargs -I {} sh -c 'echo "$(curl -r 0-102400 -m 5 -s -w %{speed_download} -o /dev/null {}ls-lR.gz)" {}' \
+		| sort -g -r | head -1 | awk '{ print $2  }')
+
+	}
+
+	if [ -f /etc/apt/sources.list.d/ubuntu.sources ];
+	then
+		apt_data_sources_loc="/etc/apt/sources.list.d/ubuntu.sources"
+	else
+		apt_data_sources_loc="/etc/apt/sources.list"
+	fi
+
+	identify_apt_mirror
 
 	if [ -z "${ubuntu_mirror}" ];
 	then
@@ -368,49 +436,58 @@ activate_mirror(){
 			echo "Identified mirror is already selected. No changes made."
 		fi
 	fi
-}
 
-apt_sources(){
-	source_archive="$1"
-
-	if [ -f "$mountpoint"/etc/apt/sources.list.d/ubuntu.sources ];
-	then
-		sources_list="$mountpoint"/etc/apt/sources.list.d/ubuntu.sources
-		cp "${sources_list}" "${sources_list}".bak
-		sed -i 's,${ubuntu_original},${source_archive},g' "${sources_list}"
-	else
-		sources_list="$mountpoint"/etc/apt/sources.list
-		cp "${sources_list}" "${sources_list}".bak
-		cat > "${sources_list}" <<-EOLIST
-			deb ${source_archive} $ubuntuver main universe restricted multiverse
-			#deb-src ${source_archive} $ubuntuver main universe restricted multiverse
-			
-			deb ${source_archive} $ubuntuver-updates main universe restricted multiverse
-			#deb-src ${source_archive} $ubuntuver-updates main universe restricted multiverse
-			
-			deb ${source_archive} $ubuntuver-backports main universe restricted multiverse
-			#deb-src ${source_archive} $ubuntuver-backports main universe restricted multiverse
-			
-			deb http://security.ubuntu.com/ubuntu $ubuntuver-security main universe restricted multiverse
-			#deb-src http://security.ubuntu.com/ubuntu $ubuntuver-security main universe restricted multiverse
-		EOLIST
-	fi
 }
 
 reinstate_apt(){
-	if [ "${mirror_archive}" = "yes" ];
-	then
-		cp "${sources_list}" "$mountpoint"/tmp/
-		sed -i "s,${source_archive},${ubuntu_original},g" "${sources_list}"
-		mv "${sources_list}".bak "$mountpoint"/tmp/
-	else true
-	fi
+	script_env="$1" ##chroot, base
+	
+	cat > /tmp/reinstate_apt.sh <<-EOF
+		
+		#!/bin/sh
+		if [ "${mirror_archive}" = "yes" ];
+		then
+			
+			if [ -f /etc/apt/sources.list.d/ubuntu.sources ];
+			then
+				sources_list=/etc/apt/sources.list.d/ubuntu.sources
+			else
+				sources_list=/etc/apt/sources.list
+			fi
+			
+			cp "\${sources_list}" /tmp
+			sed -i "s,${source_archive},${ubuntu_original},g" "\${sources_list}"
+			
+			if [ -f "\${sources_list}".bak ];
+			then
+				mv "\${sources_list}".bak /tmp
+			else true
+			fi
+		
+		else true
+		fi
 
-	if [ -f ${mountpoint}/etc/apt/apt.conf.d/30apt_error_on_transient ];
-	then
-		mv ${mountpoint}/etc/apt/apt.conf.d/30apt_error_on_transient ${mountpoint}/tmp/ ##Remove apt update error on transient in new install.
-	else true
-	fi
+		if [ -f /etc/apt/apt.conf.d/30apt_error_on_transient ];
+		then
+			mv /etc/apt/apt.conf.d/30apt_error_on_transient /tmp ##Remove apt update error on transient in new install.
+		else true
+		fi
+
+	EOF
+
+	case "${script_env}" in
+	chroot)
+		cp /tmp/reinstate_apt.sh "$mountpoint"/tmp
+		chroot "$mountpoint" /bin/bash -x /tmp/reinstate_apt.sh
+	;;
+	base)
+		/bin/bash /tmp/reinstate_apt.sh
+	;;
+	*)
+		exit 1
+	;;
+	esac
+
 }
 
 logcopy(){
@@ -707,33 +784,23 @@ debootstrap_part1_Func(){
 		APT::Update::Error-Mode "any";
 	EOF
 	
-	update_live_iso_data_sources(){
-		if [ -f /etc/apt/sources.list.d/ubuntu.sources ];
-		then
-			apt_data_sources_loc="/etc/apt/sources.list.d/ubuntu.sources"
-		else
-			apt_data_sources_loc="/etc/apt/sources.list"
-		fi
-
-		##Identify live iso default archive
-		#ubuntu_original="$(grep -v '^ *#\|security\|cdrom\|.*gpg' "${apt_data_sources_loc}".bak | sed '/^[[:space:]]*$/d' | awk '{ print $2 }' | sort -u | grep ubuntu)"
-		ubuntu_original="http://archive.ubuntu.com/ubuntu"
-		
-		if [ "${mirror_archive}" = "yes" ];
-		then
-			activate_mirror	
-		else
-			true
-		fi
-
-		#sed -i 's,deb http://security,#deb http://security,' "${apt_data_sources_loc}" ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
-		
-		cat "${apt_data_sources_loc}"
-		trap 'printf "%s\n%s" "The script has experienced an error during the first apt update. That may have been caused by a queried server not responding in time. Try running the script again." "If the issue is the security server not responding, then comment out the security server in the "${apt_data_sources_loc}". Alternatively, you can uncomment the command that does this in the install script. This affects the temporary live iso only. Not the permanent installation."' ERR
-		apt update
-		trap - ERR	##Resets the trap to doing nothing when the script experiences an error. The script will still exit on error if "set -e" is set.
-	}
-	update_live_iso_data_sources	
+	##Identify live iso default archive
+	#ubuntu_original="$(grep -v '^ *#\|security\|cdrom\|.*gpg' "${apt_data_sources_loc}".bak | sed '/^[[:space:]]*$/d' | awk '{ print $2 }' | sort -u | grep ubuntu)"
+	
+	apt_sources "base" "${ubuntu_original}"
+	
+	if [ "${mirror_archive}" = "yes" ];
+	then
+		apt_mirror_source
+	else
+		true
+	fi
+	#sed -i 's,deb http://security,#deb http://security,' "${apt_data_sources_loc}" ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
+	cat "${apt_data_sources_loc}"
+	
+	trap 'printf "%s\n%s" "The script has experienced an error during the first apt update. That may have been caused by a queried server not responding in time. Try running the script again." "If the issue is the security server not responding, then comment out the security server in the "${apt_data_sources_loc}". Alternatively, you can uncomment the command that does this in the install script. This affects the temporary live iso only. Not the permanent installation."' ERR
+	apt update
+	trap - ERR	##Resets the trap to doing nothing when the script experiences an error. The script will still exit on error if "set -e" is set.
 
 	ssh_Func(){
 		##Setup SSH to allow remote access in live environment
@@ -751,7 +818,7 @@ debootstrap_part1_Func(){
 	##Clear partition table
 	clear_partition_table "root"
 	partprobe
-	#sleep 2
+	sleep 2
 
 	##Partition disk
 	partitionsFunc(){
@@ -819,7 +886,7 @@ debootstrap_part1_Func(){
 		
 		done < /tmp/diskid_check_"${pool}".txt
 		partprobe
-		#sleep 2
+		sleep 2
 	}
 	partitionsFunc
 }
@@ -836,7 +903,7 @@ debootstrap_createzfspools_Func(){
 		##https://github.com/zbm-dev/zfsbootmenu/wiki/Debian-Buster-installation-with-ESP-on-the-zpool-disk
 		
 		partprobe
-		#sleep 2
+		sleep 2
 
 		##Create filesystem datasets to act as containers
 		zfs create -o canmount=off -o mountpoint=none "$RPOOL"/ROOT 
@@ -1226,9 +1293,9 @@ systemsetupFunc_part1(){
 	##Configure package sources
 	if [ "${mirror_archive}" = "yes" ];
 	then
-		apt_sources "${ubuntu_mirror}"
+		apt_sources "chroot" "${ubuntu_mirror}"
 	else
-		apt_sources "${ubuntu_original}"
+		apt_sources "chroot" "${ubuntu_original}"
 	fi
 
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
@@ -1292,7 +1359,7 @@ systemsetupFunc_part3(){
 		umount -q /dev/disk/by-id/"${diskidnum}"-part1 || true
 		mkdosfs -F 32 -s 1 -n EFI /dev/disk/by-id/"${diskidnum}"-part1
 		partprobe
-		#sleep 2
+		sleep 2
 		blkid_part1=""
 		blkid_part1="$(blkid -s UUID -o value /dev/disk/by-id/"${diskidnum}"-part1)"
 		echo "$blkid_part1" >> /tmp/esp_partition_list_uuid.txt
@@ -1703,173 +1770,170 @@ usersetup(){
 
 distroinstall(){
 	##Upgrade the minimal system
-	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+	
+	##Configure package sources
+	if [ "${mirror_archive}" = "yes" ];
+	then
+		apt_mirror_source
+	else
+		true
+	fi
+	
+	export DEBIAN_"${install_warning_level}"
+	
+	#if [ ! -e /var/lib/dpkg/status ]
+	#then touch /var/lib/dpkg/status
+	#fi
+	
+	apt update 
+	
+	apt dist-upgrade --yes
+	##Install command-line environment only
+	
+	#rm -f /etc/resolv.conf ##Gives an error during ubuntu-server install. "Same file as /run/systemd/resolve/stub-resolv.conf". https://bugs.launchpad.net/ubuntu/+source/systemd/+bug/1774632
+	#ln -s /run/systemd/resolve/resolv.conf /etc/resolv.conf
+	
+	if [ "$distro_variant" != "server" ];
+	then
+		zfs create 	"$RPOOL"/var/lib/AccountsService
+	fi
 
-		export DEBIAN_"${install_warning_level}"
-		
-		#if [ ! -e /var/lib/dpkg/status ]
-		#then touch /var/lib/dpkg/status
-		#fi
-		
-		apt update 
-		
-		apt dist-upgrade --yes
-		##Install command-line environment only
-		
-		#rm -f /etc/resolv.conf ##Gives an error during ubuntu-server install. "Same file as /run/systemd/resolve/stub-resolv.conf". https://bugs.launchpad.net/ubuntu/+source/systemd/+bug/1774632
-		#ln -s /run/systemd/resolve/resolv.conf /etc/resolv.conf
-		
-		if [ "$distro_variant" != "server" ];
-		then
-			zfs create 	"$RPOOL"/var/lib/AccountsService
-		fi
+	case "$distro_variant" in
+		server)	
+			##Server installation has a command line interface only.
+			##Minimal install: ubuntu-server-minimal
+			apt install --yes ubuntu-server
+		;;
+		desktop)
+			##Ubuntu default desktop install has a full GUI environment.
+			##Minimal install: ubuntu-desktop-minimal
+			apt install --yes ubuntu-desktop
+		;;
+		kubuntu)
+			##Ubuntu KDE plasma desktop install has a full GUI environment.
+			##Select sddm as display manager.
+			echo sddm shared/default-x-display-manager select sddm | debconf-set-selections
+			apt install --yes kubuntu-desktop
+		;;
+		xubuntu)
+			##Ubuntu xfce desktop install has a full GUI environment.
+			##Select lightdm as display manager.
+			echo lightdm shared/default-x-display-manager select lightdm | debconf-set-selections
+			apt install --yes xubuntu-desktop
+		;;
+		budgie)
+			##Ubuntu budgie desktop install has a full GUI environment.
+			##Select lightdm as display manager.
+			echo lightdm shared/default-x-display-manager select lightdm | debconf-set-selections
+			apt install --yes ubuntu-budgie-desktop
+		;;
+		MATE)
+			##Ubuntu MATE desktop install has a full GUI environment.
+			##Select lightdm as display manager.
+			echo lightdm shared/default-x-display-manager select lightdm | debconf-set-selections
+			apt install --yes ubuntu-mate-desktop
+		;;
+		#cinnamon)
+		##ubuntucinnamon-desktop package unavailable in 22.04.
+		#	##Ubuntu cinnamon desktop install has a full GUI environment.
+		#	apt install --yes ubuntucinnamon-desktop
+		#;;
+		*)
+			echo "Ubuntu variant variable not recognised. Check ubuntu variant variable."
+			exit 1
+		;;
+	esac
 
-		case "$distro_variant" in
-			server)	
-				##Server installation has a command line interface only.
-				##Minimal install: ubuntu-server-minimal
-				apt install --yes ubuntu-server
-			;;
-			desktop)
-				##Ubuntu default desktop install has a full GUI environment.
-				##Minimal install: ubuntu-desktop-minimal
-				apt install --yes ubuntu-desktop
-			;;
-			kubuntu)
-				##Ubuntu KDE plasma desktop install has a full GUI environment.
-				##Select sddm as display manager.
-				echo sddm shared/default-x-display-manager select sddm | debconf-set-selections
-				apt install --yes kubuntu-desktop
-			;;
-			xubuntu)
-				##Ubuntu xfce desktop install has a full GUI environment.
-				##Select lightdm as display manager.
-				echo lightdm shared/default-x-display-manager select lightdm | debconf-set-selections
-				apt install --yes xubuntu-desktop
-			;;
-			budgie)
-				##Ubuntu budgie desktop install has a full GUI environment.
-				##Select lightdm as display manager.
-				echo lightdm shared/default-x-display-manager select lightdm | debconf-set-selections
-				apt install --yes ubuntu-budgie-desktop
-			;;
-			MATE)
-				##Ubuntu MATE desktop install has a full GUI environment.
-				##Select lightdm as display manager.
-				echo lightdm shared/default-x-display-manager select lightdm | debconf-set-selections
-				apt install --yes ubuntu-mate-desktop
-			;;
-			#cinnamon)
-			##ubuntucinnamon-desktop package unavailable in 22.04.
-			#	##Ubuntu cinnamon desktop install has a full GUI environment.
-			#	apt install --yes ubuntucinnamon-desktop
-			#;;
-			*)
-				echo "Ubuntu variant variable not recognised. Check ubuntu variant variable."
-				exit 1
-			;;
-		esac
-
-	EOCHROOT
 }
 
 NetworkManager_config(){
-	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		
-		##Update netplan config to use NetworkManager if installed. Otherwise will default to networkd.
-		if [ "\$(dpkg-query --show --showformat='\${db:Status-Status}\n' "network-manager")" = "installed" ];
-		then
-			##Update netplan configuration for NetworkManager.
-			ethernetinterface="\$(basename "\$(find /sys/class/net -maxdepth 1 -mindepth 1 -name "${ethprefix}*")")"
-			rm /etc/netplan/01-"\$ethernetinterface".yaml
-			cat > /etc/netplan/01-network-manager-all.yaml <<-EOF
-				#Let NetworkManager manage all devices on this system.
-				network:
-				  version: 2
-				  renderer: NetworkManager
-			EOF
-			
-			##Disable systemd-networkd to prevent conflicts with NetworkManager.
-			systemctl stop systemd-networkd
-			systemctl disable systemd-networkd
-			#systemctl mask systemd-networkd
-			
-			netplan apply
-		else true
-		fi
+	##Update netplan config to use NetworkManager if installed. Otherwise will default to networkd.
+	if [ "$(dpkg-query --show --showformat='${db:Status-Status}\n' "network-manager")" = "installed" ];
+	then
+		##Update netplan configuration for NetworkManager.
+		ethernetinterface="$(basename "$(find /sys/class/net -maxdepth 1 -mindepth 1 -name "${ethprefix}*")")"
+		rm /etc/netplan/01-"$ethernetinterface".yaml
+		cat > /etc/netplan/01-network-manager-all.yaml <<-EOF
+			#Let NetworkManager manage all devices on this system.
+			network:
+			  version: 2
+			  renderer: NetworkManager
+		EOF
+		
+		##Disable systemd-networkd to prevent conflicts with NetworkManager.
+		systemctl stop systemd-networkd
+		systemctl disable systemd-networkd
+		#systemctl mask systemd-networkd
+		
+		netplan apply
+	else true
+	fi
 	
-	EOCHROOT
 }
 
 pyznapinstall(){
-	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		##snapshot management
-		snapshotmanagement(){
-			##https://github.com/yboetz/pyznap
-			apt install -y python3-pip
-			pip3 --version
-			##https://docs.python-guide.org/dev/virtualenvs/
-			apt install -y python3-virtualenv
-			virtualenv --version
-			apt install -y python3-virtualenvwrapper
-			mkdir /opt/pyznap
-			cd /opt/pyznap
-			virtualenv venv
-			source venv/bin/activate ##enter virtual env
-				pip install setuptools ##Setuptools not present in virtual environments created with venv. Need to install it.
-				pip install pyznap
-			deactivate ##exit virtual env
-			ln -s /opt/pyznap/venv/bin/pyznap /usr/local/bin/pyznap
-			/opt/pyznap/venv/bin/pyznap setup ##config file created /etc/pyznap/pyznap.conf
-			chown root:root -R /etc/pyznap/
-			##update config
-			cat >> /etc/pyznap/pyznap.conf <<-EOF
-				[$RPOOL/ROOT]
-				frequent = 4
-				hourly = 24
-				daily = 7
-				weekly = 4
-				monthly = 6
-				yearly = 1
-				snap = yes
-				clean = yes
-			EOF
+	##snapshot management
+	
+	##https://github.com/yboetz/pyznap
+	apt install -y python3-pip
+	pip3 --version
+	##https://docs.python-guide.org/dev/virtualenvs/
+	apt install -y python3-virtualenv
+	virtualenv --version
+	apt install -y python3-virtualenvwrapper
+	mkdir /opt/pyznap
+	cd /opt/pyznap
+	virtualenv venv
+	source venv/bin/activate ##enter virtual env
+		pip install setuptools ##Setuptools not present in virtual environments created with venv. Need to install it.
+		pip install pyznap
+	deactivate ##exit virtual env
+	ln -s /opt/pyznap/venv/bin/pyznap /usr/local/bin/pyznap
+	/opt/pyznap/venv/bin/pyznap setup ##config file created /etc/pyznap/pyznap.conf
+	chown root:root -R /etc/pyznap/
+	##update config
+	cat >> /etc/pyznap/pyznap.conf <<-EOF
+		[$RPOOL/ROOT]
+		frequent = 4
+		hourly = 24
+		daily = 7
+		weekly = 4
+		monthly = 6
+		yearly = 1
+		snap = yes
+		clean = yes
+	EOF
 
-			cat > /etc/cron.d/pyznap <<-EOF
-				SHELL=/bin/sh
-				PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-				*/15 * * * *   root    /opt/pyznap/venv/bin/pyznap snap >> /var/log/pyznap.log 2>&1
-			EOF
+	cat > /etc/cron.d/pyznap <<-EOF
+		SHELL=/bin/sh
+		PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+		*/15 * * * *   root    /opt/pyznap/venv/bin/pyznap snap >> /var/log/pyznap.log 2>&1
+	EOF
 
-			##integrate with apt
-			cat > /etc/apt/apt.conf.d/80-zfs-snapshot <<-EOF
-				DPkg::Pre-Invoke {"if [ -x /usr/local/bin/pyznap ]; then /usr/local/bin/pyznap snap; fi"};
-			EOF
+	##integrate with apt
+	cat > /etc/apt/apt.conf.d/80-zfs-snapshot <<-EOF
+		DPkg::Pre-Invoke {"if [ -x /usr/local/bin/pyznap ]; then /usr/local/bin/pyznap snap; fi"};
+	EOF
 
-			pyznap snap ##Take ZFS snapshots and perform cleanup as per config file.
-		}
-		snapshotmanagement
+	pyznap snap ##Take ZFS snapshots and perform cleanup as per config file.
 
-	EOCHROOT
 }
 
 extra_programs(){
 
 	case "$extra_programs" in
 	yes)	
-		chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-			
-			##additional programs
-			
-			##install samba mount access
-			apt install -yq cifs-utils
-			
-			##install openssh-server
-			apt install -y openssh-server
+		##additional programs
+		
+		##install samba mount access
+		apt install -yq cifs-utils
+		
+		##install openssh-server
+		apt install -y openssh-server
 
-			apt install --yes man-db tldr locate
+		apt install --yes man-db tldr locate
 			
-		EOCHROOT
 	;;
 	no)
 		true
@@ -1937,13 +2001,25 @@ fixfsmountorder(){
 
 		##Stop zed:
 		pkill -9 "zed*"
-
+		sleep 2
+		
 		##Fix the paths to eliminate $mountpoint:
 		sed -Ei "s|$mountpoint/?|/|" /etc/zfs/zfs-list.cache/$RPOOL
 		cat /etc/zfs/zfs-list.cache/$RPOOL
+		#update-initramfs -u -k all ##Update zfs cache in initramfs
 
 	EOCHROOT
 
+}
+
+unmount_datasets(){
+	##https://unix.stackexchange.com/questions/120827/recursive-umount-after-rbind-mount/371208#371208
+	##https://unix.stackexchange.com/a/120901
+	mount --make-rslave  "$mountpoint"/dev
+	mount --make-rslave "$mountpoint"/proc
+	mount --make-rslave  "$mountpoint"/sys
+	
+	grep "$mountpoint" /proc/mounts | cut -f2 -d" " | sort -r | xargs umount -n
 }
 
 setupremoteaccess(){
@@ -1981,7 +2057,7 @@ createdatapool(){
 	##Clear partition table
 	clear_partition_table "data"
 	partprobe
-	#sleep 2
+	sleep 2
 	
 	##Create pool mount point
 	if [ -d "$datapoolmount" ]; then
@@ -2109,7 +2185,7 @@ update_date_time(){
 }
 update_date_time
 
-install(){
+initialinstall(){
 	disclaimer
 	live_desktop_check
 	connectivity_check #Check for internet connectivity.
@@ -2124,30 +2200,46 @@ install(){
 	systemsetupFunc_part3 #Format EFI partition.
 	systemsetupFunc_part4 #Install zfsbootmenu.
 	systemsetupFunc_part5 #Config swap, tmpfs, rootpass.
-
+	
 	usersetup #Create user account and setup groups.
-	distroinstall #Upgrade the minimal system to the selected distro.
-	NetworkManager_config #Adjust networking config for NetworkManager, if installed by distro.
-	pyznapinstall #Snapshot management.
-	extra_programs #Install extra programs.
 	logcompress #Disable log compression.
-	reinstate_apt #Reinstate non-mirror package sources in new install.
-
+	reinstate_apt "chroot" #Reinstate non-mirror package sources in new install.
 	keyboard_console #Configure keyboard and console.
 	script_copy #Copy script to new installation.
 	fixfsmountorder #ZFS file system mount ordering.
 	logcopy #Copy install log to new installation.
-
-	echo "Install complete: ${distro_variant}."
+	#unmount_datasets #Unmount datasets.
+	
+	echo "Initial minimal system setup complete."
+	echo "Reboot required to complete installation."
 	echo "First login is ${user}:${PASSWORD-}"
+	echo "Following reboot, run script with postreboot option to complete installation."
+	echo "Reboot."
+}
+
+postreboot(){
+	disclaimer
+	connectivity_check #Check for internet connectivity.
+	
+	distroinstall #Upgrade the minimal system to the selected distro.
+	NetworkManager_config #Adjust networking config for NetworkManager, if installed by distro.
+	pyznapinstall #Snapshot management.
+	extra_programs #Install extra programs.
+
+	echo "Installation complete: ${distro_variant}."
 	echo "Reboot."
 }
 
 case "${1-default}" in
-	install)
-		echo "Running installation. Press Enter to Continue or CTRL+C to abort."
+	initial)
+		echo "Running initial system installation. Press Enter to Continue or CTRL+C to abort."
 		read -r _
-		install
+		initialinstall
+	;;
+	postreboot)
+		echo "Running postreboot setup. Press Enter to Continue or CTRL+C to abort."
+		read -r _
+		postreboot
 	;;
 	remoteaccess)
 		echo "Running remote access to ZFSBootMenu install. Press Enter to Continue or CTRL+C to abort."
@@ -2165,7 +2257,7 @@ case "${1-default}" in
 		reinstall-zbm
 	;;
 	*)
-		printf "%s\n%s\n%s\n" "-----" "Usage: $0 install | remoteaccess | datapool | reinstall-zbm" "-----"
+		printf "%s\n%s\n%s\n" "-----" "Usage: $0 initial | postreboot | remoteaccess | datapool | reinstall-zbm" "-----"
 	;;
 esac
 
