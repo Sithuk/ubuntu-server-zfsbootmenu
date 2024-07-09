@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2024-07-06
+##Script date: 2024-07-09
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -48,6 +48,7 @@ zfs_root_encrypt="native" #Encryption type. "native" for native zfs encryption. 
 locale="en_GB.UTF-8" #New install language setting.
 timezone="Europe/London" #New install timezone setting.
 zfs_rpool_ashift="12" #Drive setting for zfs pool. ashift=9 means 512B sectors (used by all ancient drives), ashift=12 means 4KiB sectors (used by most modern hard drives), and ashift=13 means 8KiB sectors (used by some modern SSDs).
+mirror_archive="" #"" to use the default ubuntu repository. Set to an ISO 3166-1 alpha-2 country code to use a country mirror archive, e.g. "GB". A speed test is run and the fastest archive is selected. Country codes: https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2
 
 RPOOL="rpool" #Root pool name.
 topology_root="single" #"single", "mirror", "raid0", "raidz1", "raidz2", or "raidz3" topology on root pool.
@@ -76,7 +77,6 @@ remoteaccess_hostname="zbm" #Name to identify the zfsbootmenu system on the netw
 remoteaccess_ip_config="dhcp" #"dhcp", "dhcp,dhcp6", "dhcp6", or "static". Automatic (dhcp) or static IP assignment for zfsbootmenu remote access.
 remoteaccess_ip="192.168.0.222" #Remote access static IP address to connect to ZFSBootMenu. Not used for automatic IP configuration.
 remoteaccess_netmask="255.255.255.0" #Remote access subnet mask. Not used for "dhcp" automatic IP configuration.
-mirror_archive="yes" #"yes" will select the fastest mirror archive to source packages. "no" to use the default archive.
 ubuntu_original="http://archive.ubuntu.com/ubuntu" #Default ubuntu repository.
 install_warning_level="PRIORITY=critical" #"PRIORITY=critical", or "FRONTEND=noninteractive". Pause install to show critical messages only or do not pause (noninteractive). Script still pauses for keyboard selection at the end.
 extra_programs="no" #"yes", or "no". Install additional programs if not included in the ubuntu distro package. Programs: cifs-utils, locate, man-db, openssh-server, tldr.
@@ -345,39 +345,58 @@ ipv6_apt_live_iso_fix(){
 
 }
 
+identify_apt_data_sources(){
+
+	if [ -f /etc/apt/sources.list.d/ubuntu.sources ];
+	then
+		apt_data_sources_loc="/etc/apt/sources.list.d/ubuntu.sources"
+	else
+		apt_data_sources_loc="/etc/apt/sources.list"
+	fi
+
+}
+
 apt_sources(){
 	##Initial system apt sources config
 	script_env="$1" ##chroot, base
 	source_archive="$2"
 	
-	sources_list=""
 	cat > /tmp/apt_sources.sh <<-EOF
 		#!/bin/sh
 		if [ -f /etc/apt/sources.list.d/ubuntu.sources ];
 		then
-			sources_list=/etc/apt/sources.list.d/ubuntu.sources	
+			apt_data_sources_loc="/etc/apt/sources.list.d/ubuntu.sources"
+			cp "\${apt_data_sources_loc}" "\${apt_data_sources_loc}".orig
 			if [ "${ubuntu_original}" != "${source_archive}" ];
 			then
-				cp "\${sources_list}" "\${sources_list}".orig
-				sed -i 's,${ubuntu_original},${source_archive},g' "\${sources_list}"
+				sed -i 's,${ubuntu_original},${source_archive},g' "\${apt_data_sources_loc}"
 			else true
 			fi
 		else
-			sources_list=/etc/apt/sources.list
-			cp "\${sources_list}" "\${sources_list}".orig
-			cat > "\${sources_list}" <<-EOLIST
-				deb ${source_archive} $ubuntuver main universe restricted multiverse
-				#deb-src ${source_archive} $ubuntuver main universe restricted multiverse
+			apt_data_sources_loc="/etc/apt/sources.list"
+			cp "\${apt_data_sources_loc}" "\${apt_data_sources_loc}".orig
+			
+			cat > "\${apt_data_sources_loc}" <<-EOLIST
+				deb ${ubuntu_original} $ubuntuver main universe restricted multiverse
+				#deb-src ${ubuntu_original} $ubuntuver main universe restricted multiverse
 				
-				deb ${source_archive} $ubuntuver-updates main universe restricted multiverse
-				#deb-src ${source_archive} $ubuntuver-updates main universe restricted multiverse
+				deb ${ubuntu_original} $ubuntuver-updates main universe restricted multiverse
+				#deb-src ${ubuntu_original} $ubuntuver-updates main universe restricted multiverse
 				
-				deb ${source_archive} $ubuntuver-backports main universe restricted multiverse
-				#deb-src ${source_archive} $ubuntuver-backports main universe restricted multiverse
+				deb ${ubuntu_original} $ubuntuver-backports main universe restricted multiverse
+				#deb-src ${ubuntu_original} $ubuntuver-backports main universe restricted multiverse
 				
 				deb http://security.ubuntu.com/ubuntu $ubuntuver-security main universe restricted multiverse
 				#deb-src http://security.ubuntu.com/ubuntu $ubuntuver-security main universe restricted multiverse
 			EOLIST
+			
+			if [ "${ubuntu_original}" != "${source_archive}" ];
+			then
+				cp "\${apt_data_sources_loc}" "\${apt_data_sources_loc}".non-mirror
+				sed -i 's,${ubuntu_original},${source_archive},g' "\${apt_data_sources_loc}"
+			else true
+			fi
+			
 		fi
 	EOF
 
@@ -398,6 +417,8 @@ apt_sources(){
 
 apt_mirror_source(){
 	
+	identify_apt_data_sources
+	
 	identify_apt_mirror(){
 		##Identify fastest mirror.
 		echo "Choosing fastest up-to-date ubuntu mirror based on download speed."
@@ -407,20 +428,11 @@ apt_mirror_source(){
 		##Choose mirrors that are up-to-date by checking the Last-Modified header.
 		##https://github.com/actions/runner-images/issues/675#issuecomment-1381837292
 		{
-		curl -s http://mirrors.ubuntu.com/mirrors.txt
+		curl -s http://mirrors.ubuntu.com/"${mirror_archive}".txt | shuf -n 20
 		} | xargs -I {} sh -c 'echo "$(curl -m 5 -sI {}dists/$(lsb_release -c | cut -f2)-security/Contents-$(dpkg --print-architecture).gz | sed s/\\r\$//|grep Last-Modified|awk -F": " "{ print \$2 }" | LANG=C date -f- -u +%s)" "{}"' | sort -rg | awk '{ if (NR==1) TS=$1; if ($1 == TS) print $2 }'
 		} | xargs -I {} sh -c 'echo "$(curl -r 0-102400 -m 5 -s -w %{speed_download} -o /dev/null {}ls-lR.gz)" {}' \
 		| sort -g -r | head -1 | awk '{ print $2  }')
-
 	}
-
-	if [ -f /etc/apt/sources.list.d/ubuntu.sources ];
-	then
-		apt_data_sources_loc="/etc/apt/sources.list.d/ubuntu.sources"
-	else
-		apt_data_sources_loc="/etc/apt/sources.list"
-	fi
-
 	identify_apt_mirror
 
 	if [ -z "${ubuntu_mirror}" ];
@@ -429,7 +441,7 @@ apt_mirror_source(){
 	else
 		if [ "${ubuntu_original}" != "${ubuntu_mirror}" ];
 		then
-			cp "${apt_data_sources_loc}" "${apt_data_sources_loc}".bak
+			cp "${apt_data_sources_loc}" "${apt_data_sources_loc}".non-mirror
 			sed -i "s,${ubuntu_original},${ubuntu_mirror},g" "${apt_data_sources_loc}"
 			echo "Selected '${ubuntu_mirror}'."
 		else
@@ -445,25 +457,25 @@ reinstate_apt(){
 	cat > /tmp/reinstate_apt.sh <<-EOF
 		
 		#!/bin/sh
-		if [ "${mirror_archive}" = "yes" ];
+		if [ -n "${mirror_archive}" ];
 		then
 			
 			if [ -f /etc/apt/sources.list.d/ubuntu.sources ];
 			then
-				sources_list=/etc/apt/sources.list.d/ubuntu.sources
+				apt_data_sources_loc="/etc/apt/sources.list.d/ubuntu.sources"
 			else
-				sources_list=/etc/apt/sources.list
+				apt_data_sources_loc="/etc/apt/sources.list"
 			fi
 			
-			cp "\${sources_list}" /tmp
-			sed -i "s,${source_archive},${ubuntu_original},g" "\${sources_list}"
-			
-			if [ -f "\${sources_list}".bak ];
+			cp "\${apt_data_sources_loc}" /tmp
+						
+			if [ -f "\${apt_data_sources_loc}".non-mirror ];
 			then
-				mv "\${sources_list}".bak /tmp
+				cp "\${apt_data_sources_loc}".non-mirror /tmp
+				mv "\${apt_data_sources_loc}".non-mirror "\${apt_data_sources_loc}"
 			else true
 			fi
-		
+	
 		else true
 		fi
 
@@ -784,19 +796,23 @@ debootstrap_part1_Func(){
 		APT::Update::Error-Mode "any";
 	EOF
 	
+	##Identify apt sources
+	identify_apt_data_sources
+	
 	##Identify live iso default archive
-	#ubuntu_original="$(grep -v '^ *#\|security\|cdrom\|.*gpg' "${apt_data_sources_loc}".bak | sed '/^[[:space:]]*$/d' | awk '{ print $2 }' | sort -u | grep ubuntu)"
+	#ubuntu_original="$(grep -v '^ *#\|security\|cdrom\|.*gpg' "${apt_data_sources_loc}" | sed '/^[[:space:]]*$/d' | awk '{ print $2 }' | sort -u | grep ubuntu)"
 	
 	apt_sources "base" "${ubuntu_original}"
 	
-	if [ "${mirror_archive}" = "yes" ];
+	if [ -n "${mirror_archive}" ];
 	then
 		apt_mirror_source
 	else
 		true
 	fi
-	#sed -i 's,deb http://security,#deb http://security,' "${apt_data_sources_loc}" ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
+	
 	cat "${apt_data_sources_loc}"
+	#sed -i 's,deb http://security,#deb http://security,' "${apt_data_sources_loc}" ##Uncomment to resolve security pocket time out. Security packages are copied to the other pockets frequently, so should still be available for update. See https://wiki.ubuntu.com/SecurityTeam/FAQ
 	
 	trap 'printf "%s\n%s" "The script has experienced an error during the first apt update. That may have been caused by a queried server not responding in time. Try running the script again." "If the issue is the security server not responding, then comment out the security server in the "${apt_data_sources_loc}". Alternatively, you can uncomment the command that does this in the install script. This affects the temporary live iso only. Not the permanent installation."' ERR
 	apt update
@@ -1291,7 +1307,7 @@ systemsetupFunc_part1(){
 	mount --rbind /sys  "$mountpoint"/sys 
 
 	##Configure package sources
-	if [ "${mirror_archive}" = "yes" ];
+	if [ -n "${mirror_archive}" ];
 	then
 		apt_sources "chroot" "${ubuntu_mirror}"
 	else
@@ -1772,7 +1788,7 @@ distroinstall(){
 	##Upgrade the minimal system
 	
 	##Configure package sources
-	if [ "${mirror_archive}" = "yes" ];
+	if [ -n "${mirror_archive}" ];
 	then
 		apt_mirror_source
 	else
@@ -2225,7 +2241,8 @@ postreboot(){
 	NetworkManager_config #Adjust networking config for NetworkManager, if installed by distro.
 	pyznapinstall #Snapshot management.
 	extra_programs #Install extra programs.
-
+	reinstate_apt "base" #Reinstate non-mirror package sources in new install.
+	
 	echo "Installation complete: ${distro_variant}."
 	echo "Reboot."
 }
