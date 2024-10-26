@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2024-07-09
+##Script date: 2024-10-26
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -2175,6 +2175,36 @@ reinstall-zbm(){
 	fi
 }
 
+reinstall-pyznap(){
+	
+	if [ -f /etc/apt/apt.conf.d/80-zfs-snapshot ];
+	then
+		rm /etc/apt/apt.conf.d/80-zfs-snapshot
+	else true
+	fi
+	
+	if [ -f /usr/local/bin/pyznap ];
+	then
+		rm /usr/local/bin/pyznap
+	else true
+	fi
+	
+	if [ -d /opt/pyznap ];
+	then
+		rm -rf /opt/pyznap
+	else true
+	fi
+
+	if [ -f /etc/pyznap/pyznap.conf ];
+	then
+		rm /etc/pyznap/pyznap.conf
+	else true
+	fi
+	
+	pyznapinstall
+
+}
+
 ##--------
 logFunc
 date
@@ -2273,8 +2303,13 @@ case "${1-default}" in
 		read -r _
 		reinstall-zbm
 	;;
+	reinstall-pyznap)
+		echo "Re-installing pyznap. Press Enter to Continue ot CTRL+C to abort."
+		read -r
+		reinstall-pyznap
+	;;
 	*)
-		printf "%s\n%s\n%s\n" "-----" "Usage: $0 initial | postreboot | remoteaccess | datapool | reinstall-zbm" "-----"
+		printf "%s\n%s\n%s\n" "-----" "Usage: $0 initial | postreboot | remoteaccess | datapool | reinstall-zbm | reinstall-pyznap" "-----"
 	;;
 esac
 
