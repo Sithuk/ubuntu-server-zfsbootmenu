@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2024-10-26
+##Script date: 2024-11-02
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -1026,19 +1026,45 @@ zfsbootmenu_install_config_Func(){
 			mkdir -p /usr/local/src/zfsbootmenu
 			cd /usr/local/src/zfsbootmenu
 
-			##Download the latest zfsbootmenu git master
-			download_zbm_git_master(){
+			##Download zfsbootmenu
+			zbm_release="git" ##"git" for git master. "release" for latest release.
+
+			case "\${zbm_release}" in
+			git)
+
+				##Download the latest zfsbootmenu git master
 				git clone https://github.com/zbm-dev/zfsbootmenu .
-			}
-			
-			##Download the latest zbm release
-			download_zbm_release(){
+
+			;;
+
+			release)
+
+				##Download the latest zbm release
 				#latest_zbm_source="https://get.zfsbootmenu.org/source" #Source code from zfsbootmenu website.
-				latest_zbm_source="\$(curl -s https://api.github.com/repos/zbm-dev/zfsbootmenu/releases/latest | grep tarball | cut -d : -f 2,3 | tr -d \"|sed 's/^[ \t]*//'|sed 's/,//')"
+
+				use_yq="no"
+				case "\${use_yq}" in
+				yes)
+					##https://github.com/mikefarah/yq
+					wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq && chmod +x /usr/bin/yq
+
+					latest_zbm_source="\$(curl -s https://api.github.com/repos/zbm-dev/zfsbootmenu/releases/latest | yq '.tarball_url')"
+				;;
+				no)
+					latest_zbm_source="\$(curl -s https://api.github.com/repos/zbm-dev/zfsbootmenu/releases/latest | grep tarball | cut -d : -f 2,3 | tr -d \"|sed 's/^[ \t]*//'|sed 's/,//')"
+				;;
+				esac
+
 				curl -L "\${latest_zbm_source-default}" | tar -zxv --strip-components=1 -f -
-			}
-			download_zbm_git_master
-			#download_zbm_release
+
+			;;
+
+			*)
+				echo "Zfsbootmenu release version not recognised."
+				exit 1
+			;;
+
+			esac
 
 			make core dracut ##"make install" installs mkinitcpio, not needed.
 
@@ -1300,6 +1326,8 @@ systemsetupFunc_part1(){
 		    $ethernetinterface:
 		      dhcp4: yes
 	EOF
+	##https://netplan.readthedocs.io/en/stable/reference/
+	chmod 600 "$mountpoint"/etc/netplan/01-"$ethernetinterface".yaml
 
 	##Bind virtual filesystems from LiveCD to new system
 	mount --rbind /dev  "$mountpoint"/dev
@@ -2176,19 +2204,19 @@ reinstall-zbm(){
 }
 
 reinstall-pyznap(){
-	
+
 	if [ -f /etc/apt/apt.conf.d/80-zfs-snapshot ];
 	then
 		rm /etc/apt/apt.conf.d/80-zfs-snapshot
 	else true
 	fi
-	
+
 	if [ -f /usr/local/bin/pyznap ];
 	then
 		rm /usr/local/bin/pyznap
 	else true
 	fi
-	
+
 	if [ -d /opt/pyznap ];
 	then
 		rm -rf /opt/pyznap
@@ -2200,7 +2228,7 @@ reinstall-pyznap(){
 		rm /etc/pyznap/pyznap.conf
 	else true
 	fi
-	
+
 	pyznapinstall
 
 }
