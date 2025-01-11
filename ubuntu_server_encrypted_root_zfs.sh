@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2024-11-02
+##Script date: 2025-01-11
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -138,6 +138,17 @@ live_desktop_check(){
 		exit 1
 	fi
 
+}
+
+keyboard_console_settings(){
+	kb_console_settings=/tmp/kb_console_selections.conf
+	
+	apt install -y debconf-utils
+	dpkg-reconfigure keyboard-configuration
+	dpkg-reconfigure console-setup
+
+	debconf-get-selections | grep keyboard-configuration | tee "${kb_console_settings}"
+	debconf-get-selections | grep console-setup | tee -a "${kb_console_settings}"
 }
 
 topology_min_disk_check(){
@@ -2003,17 +2014,22 @@ logcompress(){
 	EOCHROOT
 }
 
-keyboard_console(){
+keyboard_console_setup(){
+
+	cp "${kb_console_settings}" "$mountpoint"/tmp
+	
 	chroot "$mountpoint" <<-EOCHROOT
-
-		#dpkg-reconfigure --priority=medium --frontend=dialog keyboard-configuration console-setup && setupcon #Priority needs to be set to medium or low to trigger console-setup dialog.
-
-		export DEBIAN_PRIORITY=high
-		export DEBIAN_FRONTEND=dialog
-
-		dpkg-reconfigure keyboard-configuration
-		dpkg-reconfigure console-setup #Priority needs to be set to medium or low to trigger console-setup dialog.
-		setupcon
+		
+		apt install -y debconf-utils
+		cat "${kb_console_settings}"
+		debconf-set-selections < "${kb_console_settings}"
+		
+		##https://serverfault.com/questions/539911/setting-debconf-selections-for-keyboard-configuration-fails-layout-ends-up-as
+		##Delete the keyboard config file before running dpkg-reconfigure. Otherwise config file will not be updated and will stay as "us" default.
+		rm /etc/default/keyboard
+		
+		dpkg-reconfigure keyboard-configuration -f noninteractive
+		dpkg-reconfigure console-setup -f noninteractive
 
 	EOCHROOT
 }
@@ -2260,11 +2276,13 @@ update_date_time(){
 update_date_time
 
 initialinstall(){
+
 	disclaimer
 	live_desktop_check
 	connectivity_check #Check for internet connectivity.
 	getdiskID_pool "root"
 	ipv6_apt_live_iso_fix #Only active if ipv6_apt_fix_live_iso variable is set to "yes".
+	keyboard_console_settings #Request keyboard and console settings.
 
 	debootstrap_part1_Func
 	debootstrap_createzfspools_Func
@@ -2273,15 +2291,16 @@ initialinstall(){
 	systemsetupFunc_part2 #Install zfs.
 	systemsetupFunc_part3 #Format EFI partition.
 	systemsetupFunc_part4 #Install zfsbootmenu.
+	keyboard_console_setup #Configure keyboard and console.
 	systemsetupFunc_part5 #Config swap, tmpfs, rootpass.
 	
 	usersetup #Create user account and setup groups.
 	logcompress #Disable log compression.
 	reinstate_apt "chroot" #Reinstate non-mirror package sources in new install.
-	keyboard_console #Configure keyboard and console.
 	script_copy #Copy script to new installation.
 	fixfsmountorder #ZFS file system mount ordering.
 	logcopy #Copy install log to new installation.
+	
 	#unmount_datasets #Unmount datasets.
 	
 	echo "Initial minimal system setup complete."
