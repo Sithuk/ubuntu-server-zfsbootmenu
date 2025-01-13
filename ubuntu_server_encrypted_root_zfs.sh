@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2025-01-11
+##Script date: 2025-01-13
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -78,7 +78,7 @@ remoteaccess_ip_config="dhcp" #"dhcp", "dhcp,dhcp6", "dhcp6", or "static". Autom
 remoteaccess_ip="192.168.0.222" #Remote access static IP address to connect to ZFSBootMenu. Not used for automatic IP configuration.
 remoteaccess_netmask="255.255.255.0" #Remote access subnet mask. Not used for "dhcp" automatic IP configuration.
 ubuntu_original="http://archive.ubuntu.com/ubuntu" #Default ubuntu repository.
-install_warning_level="PRIORITY=critical" #"PRIORITY=critical", or "FRONTEND=noninteractive". Pause install to show critical messages only or do not pause (noninteractive). Script still pauses for keyboard selection at the end.
+install_warning_level="PRIORITY=critical" #"PRIORITY=critical", or "FRONTEND=noninteractive". Pause install to show critical messages only or do not pause (noninteractive). Script still pauses for keyboard selection.
 extra_programs="no" #"yes", or "no". Install additional programs if not included in the ubuntu distro package. Programs: cifs-utils, locate, man-db, openssh-server, tldr.
 
 ##Check for root priviliges
@@ -144,9 +144,13 @@ keyboard_console_settings(){
 	kb_console_settings=/tmp/kb_console_selections.conf
 	
 	apt install -y debconf-utils
+	
+	export DEBIAN_PRIORITY=high
+	export DEBIAN_FRONTEND=dialog
 	dpkg-reconfigure keyboard-configuration
 	dpkg-reconfigure console-setup
-
+	export DEBIAN_"${install_warning_level}"
+	
 	debconf-get-selections | grep keyboard-configuration | tee "${kb_console_settings}"
 	debconf-get-selections | grep console-setup | tee -a "${kb_console_settings}"
 }
@@ -829,6 +833,8 @@ debootstrap_part1_Func(){
 	apt update
 	trap - ERR	##Resets the trap to doing nothing when the script experiences an error. The script will still exit on error if "set -e" is set.
 
+	keyboard_console_settings #Request keyboard and console settings.
+
 	ssh_Func(){
 		##Setup SSH to allow remote access in live environment
 		apt install --yes openssh-server
@@ -1084,12 +1090,16 @@ zfsbootmenu_install_config_Func(){
 
 		##configure zfsbootmenu
 		config_zbm(){
+			
+			kb_layoutcode="\$(debconf-get-selections | grep keyboard-configuration/layoutcode | awk '{print \$4}')"
+			
 			##https://github.com/zbm-dev/zfsbootmenu/blob/master/testing/helpers/configure-ubuntu.sh
 			##Update configuration file
 			sed \\
 			-e 's,ManageImages:.*,ManageImages: true,' \\
 			-e 's@ImageDir:.*@ImageDir: /boot/efi/EFI/ubuntu@' \\
 			-e 's,Versions:.*,Versions: false,' \\
+			-e "/CommandLine/s,ro,rd.vconsole.keymap=\${kb_layoutcode} ro," \\
 			-i /etc/zfsbootmenu/config.yaml
 
 			if [ "$quiet_boot" = "no" ]; then
@@ -1461,6 +1471,7 @@ systemsetupFunc_part3(){
 }
 
 systemsetupFunc_part4(){
+
 	cp /tmp/diskid_check_"${pool}".txt "$mountpoint"/tmp/
 	
 	if [ -f /tmp/luks_dmname_"${pool}".txt ];
@@ -2028,8 +2039,8 @@ keyboard_console_setup(){
 		##Delete the keyboard config file before running dpkg-reconfigure. Otherwise config file will not be updated and will stay as "us" default.
 		rm /etc/default/keyboard
 		
-		dpkg-reconfigure keyboard-configuration -f noninteractive
-		dpkg-reconfigure console-setup -f noninteractive
+		dpkg-reconfigure -f noninteractive keyboard-configuration
+		dpkg-reconfigure -f noninteractive console-setup
 
 	EOCHROOT
 }
@@ -2276,13 +2287,12 @@ update_date_time(){
 update_date_time
 
 initialinstall(){
-
+	
 	disclaimer
 	live_desktop_check
 	connectivity_check #Check for internet connectivity.
 	getdiskID_pool "root"
 	ipv6_apt_live_iso_fix #Only active if ipv6_apt_fix_live_iso variable is set to "yes".
-	keyboard_console_settings #Request keyboard and console settings.
 
 	debootstrap_part1_Func
 	debootstrap_createzfspools_Func
@@ -2290,8 +2300,9 @@ initialinstall(){
 	systemsetupFunc_part1 #Basic system configuration.
 	systemsetupFunc_part2 #Install zfs.
 	systemsetupFunc_part3 #Format EFI partition.
-	systemsetupFunc_part4 #Install zfsbootmenu.
+	
 	keyboard_console_setup #Configure keyboard and console.
+	systemsetupFunc_part4 #Install zfsbootmenu.
 	systemsetupFunc_part5 #Config swap, tmpfs, rootpass.
 	
 	usersetup #Create user account and setup groups.
