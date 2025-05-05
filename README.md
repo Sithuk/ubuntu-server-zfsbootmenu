@@ -16,7 +16,7 @@ Supports:
 - Creation of a separate encrypted data pool (single/mirror/raidz).
 
 ## Usage
-Boot the system with an Ubuntu live desktop iso (ZFS 2.0 support needed for native encryption, so use Ubuntu 21.04 or later). Start the terminal (Ctrl+Alt+T) and enter the following.
+Boot the system with an Ubuntu live desktop iso. Start the terminal (Ctrl+Alt+T) and enter the following.
 
 	git clone https://github.com/Sithuk/ubuntu-server-zfsbootmenu.git ~/ubuntu-server-zfsbootmenu
     cd ~/ubuntu-server-zfsbootmenu
