@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2025-01-13
+##Script date: 2025-11-16
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -446,7 +446,7 @@ apt_mirror_source(){
 		curl -s http://mirrors.ubuntu.com/"${mirror_archive}".txt | shuf -n 20
 		} | xargs -I {} sh -c 'echo "$(curl -m 5 -sI {}dists/$(lsb_release -c | cut -f2)-security/Contents-$(dpkg --print-architecture).gz | sed s/\\r\$//|grep Last-Modified|awk -F": " "{ print \$2 }" | LANG=C date -f- -u +%s)" "{}"' | sort -rg | awk '{ if (NR==1) TS=$1; if ($1 == TS) print $2 }'
 		} | xargs -I {} sh -c 'echo "$(curl -r 0-102400 -m 5 -s -w %{speed_download} -o /dev/null {}ls-lR.gz)" {}' \
-		| sort -g -r | head -1 | awk '{ print $2  }')
+		| sort -g -r | tee /tmp/mirrors_speed.txt | head -1 | awk '{ print $2  }')
 	}
 	identify_apt_mirror
 
@@ -2276,8 +2276,18 @@ update_date_time(){
 
 	sync_ntp(){
 
-		systemctl restart systemd-timesyncd.service
-		systemctl status systemd-timesyncd.service
+		if systemctl is-active systemd-timesyncd
+		then
+			systemctl restart systemd-timesyncd.service
+			systemctl status systemd-timesyncd.service
+		else
+			if systemctl is-active chrony
+			then
+				chronyc burst 4/4 #Requests up to 4 good measurements (and up to 4 total attempts) from all configured sources.
+				chronyc makestep #Update the system clock.
+			else true
+			fi
+		fi
 
 	}
 	sync_ntp
