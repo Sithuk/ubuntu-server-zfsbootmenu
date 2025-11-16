@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2025-11-16
+##Script date: 2025-11-22
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -38,7 +38,7 @@ set -euo pipefail
 ##zfs mount -a #Mount all datasets.
 
 ##Variables:
-ubuntuver="noble" #Ubuntu release to install. "jammy" (22.04). "noble" (24.04).
+ubuntuver="noble" #Ubuntu release to install. "jammy" (22.04). "noble" (24.04). "questing" (25.10).
 distro_variant="server" #Ubuntu variant to install. "server" (Ubuntu server; cli only.) "desktop" (Default Ubuntu desktop install). "kubuntu" (KDE plasma desktop variant). "xubuntu" (Xfce desktop variant). "budgie" (Budgie desktop variant). "MATE" (MATE desktop variant).
 user="testuser" #Username for new install.
 PASSWORD="testuser" #Password for user in new install.
@@ -1987,6 +1987,110 @@ pyznapinstall(){
 
 }
 
+sanoid_install(){
+	##snapshot and replication management
+	##https://github.com/jimsalterjrs/sanoid
+	apt update
+	apt install -y sanoid 
+	
+	##create config file
+	##https://github.com/jimsalterjrs/sanoid/wiki/Sanoid
+	##https://github.com/jimsalterjrs/sanoid/blob/master/sanoid.conf
+	mkdir -p /etc/sanoid
+	cat > /etc/sanoid/sanoid.conf <<-EOF
+		[$RPOOL/ROOT]
+			use_template = template_production
+			recursive = yes
+			process_children_only = yes #Do not snapshot the parent dataset $RPOOL/ROOT. The OS root dataset is a child dataset of $RPOOL/ROOT.
+			
+		#############################
+		# templates below this line #
+		#############################
+		
+		[template_production]
+			##Number of sub-hourly backups to be kept: 4 × 15-minute snapshots
+			frequently = 4
+
+			##Number of hourly backups to be kept: 24 x One hour snapshots
+			hourly = 24
+
+			##Then one per day for a week, one per week for a month, one per month for six months and one per year.
+			daily = 7
+			weekly = 4
+			monthly = 6
+			yearly = 0
+
+			autosnap = yes #Sets whether snapshots should be taken automatically
+			autoprune = yes #Should old snapshots be pruned
+			
+	EOF
+	
+	pre-apt-snapshot(){
+		##Integrate with apt to take a snapshot before system change. Don't need to use. Can rely on sanoid time based snapshots instead.
+		##Immediate snapshotting not supported with sanoid.
+		##https://github.com/jimsalterjrs/sanoid/issues/108
+		
+		##Approach below relies on "zfs snapshot" with a defined prefix. A systemd timer prunes the snapshots as they won't be managed by sanoid.
+		pre_apt_prefix="pre-apt"
+		
+		cat > /etc/apt/apt.conf.d/80-zfs-snapshot <<-EOF
+			
+			DPkg::Pre-Invoke { "echo 'Creating ZFS snapshot.'; ts=${pre_apt_prefix}_\$(date +%F_%H:%M:%S); zfs snapshot -r $RPOOL/ROOT@\${ts} && zfs destroy $RPOOL/ROOT@\${ts} || true"; };
+
+		EOF
+		
+		cat > /usr/local/bin/apt-snapshot-prune.sh <<-EOF
+			#!/bin/sh
+			##Prune all ZFS snapshots containing ${pre_apt_prefix} that are older than 7 days.
+
+			##Find all snapshots with ${pre_apt_prefix} in the name.
+			zfs list -H -p -o name,creation -t snapshot -r $(zpool list -H -o name) | grep '${pre_apt_prefix}' |
+			while read name creation; 
+			do
+				age=\$(( \$(date +%s) - creation ))
+				one_week=\$(( 7 * 24 * 3600 ))
+				if [ \$age -gt \$one_week ]; then
+					echo "Deleting old pre-apt snapshot: \$name (age: \$((age / 86400)) days)"
+					zfs destroy "\$name"
+				fi
+			  done
+		EOF
+		chmod +x /usr/local/bin/apt-snapshot-prune.sh
+		
+		cat > /etc/systemd/system/apt-snapshot-prune.service <<-EOF
+			[Unit]
+			Description=Prune old ${pre_apt_prefix} ZFS snapshots
+
+			[Service]
+			Type=oneshot
+			ExecStart=/usr/local/bin/apt-snapshot-prune.sh
+			Nice=19 ##Set lowest system priority.
+			IOSchedulingClass=3 ##Only run when disk is idle.
+		EOF
+
+		cat > /etc/systemd/system/apt-snapshot-prune.timer <<-EOF
+			[Unit]
+			Description=Daily cleanup of old ${pre_apt_prefix} ZFS snapshots
+			Requires=apt-snapshot-prune.service
+
+			[Timer]
+			OnCalendar=daily
+			Persistent=true
+			Unit=apt-snapshot-prune.service
+
+			[Install]
+			WantedBy=timers.target
+		EOF
+		
+	}
+	pre-apt-snapshot
+	
+	/usr/sbin/sanoid --take-snapshots --verbose ##Take ZFS snapshots and perform cleanup as per config file.
+	
+	systemctl enable --now sanoid.timer
+	
+}
+
 extra_programs(){
 
 	case "$extra_programs" in
@@ -2286,6 +2390,7 @@ update_date_time(){
 			then
 				chronyc burst 4/4 #Requests up to 4 good measurements (and up to 4 total attempts) from all configured sources.
 				chronyc makestep #Update the system clock.
+				systemctl restart chrony
 			else true
 			fi
 		fi
@@ -2338,7 +2443,8 @@ postreboot(){
 	
 	distroinstall #Upgrade the minimal system to the selected distro.
 	NetworkManager_config #Adjust networking config for NetworkManager, if installed by distro.
-	pyznapinstall #Snapshot management.
+	#pyznapinstall #Snapshot management.
+	sanoid_install #Snapshot and replication management.
 	extra_programs #Install extra programs.
 	reinstate_apt "base" #Reinstate non-mirror package sources in new install.
 	
