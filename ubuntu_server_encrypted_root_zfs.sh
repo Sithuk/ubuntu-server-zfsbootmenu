@@ -1036,7 +1036,8 @@ zfsbootmenu_install_config_Func(){
 				make \\
 				kexec-tools \\
 				dracut-core \\
-				fzf
+				fzf \\
+				cpio
 
 			apt-get install --yes curl
 			
