@@ -1,6 +1,6 @@
 # Ubuntu zfsbootmenu install script
 
-This script creates an Ubuntu installation using the ZFS filesystem. The installation has integrated snapshot management using pyznap. Snapshots can be rolled back remotely at boot over ssh using zfsbootmenu. This is useful where there is no physical access to the machine.
+This script creates an Ubuntu installation using the ZFS filesystem. The installation has integrated snapshot management using sanoid. Snapshots can be rolled back remotely at boot over ssh using zfsbootmenu. This is useful where there is no physical access to the machine.
 
 Snapshots allow you to rollback your system to a previous state if there is a problem. The system automatically creates snapshots on a timer and also when the system is updated with apt. Snapshots are pruned over time to keep fewer older snapshots.
 
@@ -77,7 +77,7 @@ Additional guidance and notes can be found in the script.
      It is possible that upgrading ubuntu will cause a newer zfs version to be installed that is unsupported by zfsbootmenu. The system may not be able to boot if the zfs root pool is upgraded beyond what is supported by zfsbootmenu. Create a test system in a virtual machine first to duplicate your setup and test the upgrade process.
    - Pyznap
    
-     Pyznap is not included as a package in the ubuntu repos at present. It may need to be re-compiled and re-installed. You can reference the install script for the relevant code to re-compile and re-install. 
+     A previous version of the script installed pyznap for snapshot management. Pyznap is not included as a package in the ubuntu repos at present. It may need to be re-compiled and re-installed. You can reference the install script for the relevant code to re-compile and re-install. 
 
 4. How do I change the password on a natively encrypted zfs root pool?
 
@@ -105,6 +105,6 @@ https://www.reddit.com/r/zfs/comments/mj4nfa/ubuntu_server_2104_native_encrypted
 ## Credits
 ahesford E39M5S62/zdykstra (https://github.com/zbm-dev/zfsbootmenu)
 
-cythoning (https://github.com/yboetz/pyznap)
+jimsalterjrs (https://github.com/jimsalterjrs/sanoid)
 
 rlaager (https://openzfs.github.io/openzfs-docs/Getting%20Started/Ubuntu/Ubuntu%2022.04%20Root%20on%20ZFS.html)
