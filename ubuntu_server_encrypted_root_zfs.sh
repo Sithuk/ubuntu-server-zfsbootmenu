@@ -2014,7 +2014,7 @@ sanoid_install(){
 			##Number of hourly backups to be kept: 24 x One hour snapshots
 			hourly = 24
 
-			##Then one per day for a week, one per week for a month, one per month for six months and one per year.
+			##Then one per day for a week, one per week for a month, and one per month for six months.
 			daily = 7
 			weekly = 4
 			monthly = 6
