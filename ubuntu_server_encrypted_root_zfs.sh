@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2025-11-22
+##Script date: 2025-11-30
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -2479,7 +2479,7 @@ case "${1-default}" in
 		reinstall-zbm
 	;;
 	reinstall-pyznap)
-		echo "Re-installing pyznap. Press Enter to Continue ot CTRL+C to abort."
+		echo "Re-installing pyznap. Press Enter to Continue or CTRL+C to abort."
 		read -r
 		reinstall-pyznap
 	;;
