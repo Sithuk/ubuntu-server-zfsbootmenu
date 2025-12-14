@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2025-11-30
+##Script date: 2025-12-14
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -1921,17 +1921,22 @@ NetworkManager_config(){
 		##Update netplan configuration for NetworkManager.
 		ethernetinterface="$(basename "$(find /sys/class/net -maxdepth 1 -mindepth 1 -name "${ethprefix}*")")"
 		rm /etc/netplan/01-"$ethernetinterface".yaml
-		cat > /etc/netplan/01-network-manager-all.yaml <<-EOF
-			#Let NetworkManager manage all devices on this system.
+		cat > /etc/netplan/01-NetworkManager.yaml <<-EOF
 			network:
 			  version: 2
 			  renderer: NetworkManager
+			  ethernets:
+			    "$ethernetinterface":
+			      dhcp4: true
 		EOF
+		chmod 600 /etc/netplan/01-NetworkManager.yaml
 		
 		##Disable systemd-networkd to prevent conflicts with NetworkManager.
-		systemctl stop systemd-networkd
-		systemctl disable systemd-networkd
-		#systemctl mask systemd-networkd
+		systemctl stop systemd-networkd.service
+		systemctl disable systemd-networkd.service
+
+		systemctl stop systemd-networkd.socket
+		systemctl disable systemd-networkd.socket
 		
 		netplan apply
 	else true
@@ -2390,6 +2395,7 @@ update_date_time(){
 			then
 				chronyc burst 4/4 #Requests up to 4 good measurements (and up to 4 total attempts) from all configured sources.
 				chronyc makestep #Update the system clock.
+				chronyc waitsync 3 #Wait 30 seconds for chrony to sync (3 x 10s)
 				systemctl restart chrony
 			else true
 			fi
