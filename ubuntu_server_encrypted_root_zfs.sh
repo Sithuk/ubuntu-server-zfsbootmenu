@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2025-12-14
+##Script date: 2025-12-26
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -2394,16 +2394,22 @@ update_date_time(){
 			if systemctl is-active chrony
 			then
 				chronyc burst 4/4 #Requests up to 4 good measurements (and up to 4 total attempts) from all configured sources.
+				sleep 10 ##Allow time for burst to complete.
 				chronyc makestep #Update the system clock.
-				chronyc waitsync 3 #Wait 30 seconds for chrony to sync (3 x 10s)
-				systemctl restart chrony
+				
+				##Check status
+				chronyc tracking
+				chronyc sources
 			else true
 			fi
 		fi
 
 	}
 	sync_ntp
-
+	
+	timedatectl set-ntp false
+	timedatectl set-ntp true
+	sleep 5
 	timedatectl
 }
 update_date_time
