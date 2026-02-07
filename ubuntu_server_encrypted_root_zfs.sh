@@ -54,7 +54,7 @@ RPOOL="rpool" #Root pool name.
 topology_root="single" #"single", "mirror", "raid0", "raidz1", "raidz2", or "raidz3" topology on root pool.
 disks_root="1" #Number of disks in array for root pool. Not used with single topology.
 EFI_boot_size="512" #EFI boot loader partition size in mebibytes (MiB).
-swap_size="500" #Swap partition size in mebibytes (MiB). Size of swap will be larger than defined here with Raidz topologies.
+swap_size="500" #Swap partition size in mebibytes (MiB). Size of swap will be larger than defined here with Raidz topologies. Skip creating swap partition by setting to "0" or "".
 datapool="datapool" #Non-root drive data pool name.
 topology_data="single" #"single", "mirror", "raid0", "raidz1", "raidz2", or "raidz3" topology on data pool.
 # shellcheck disable=SC2034 #disks_data used indirectly via eval in topology_min_disk_check()
@@ -1658,143 +1658,145 @@ systemsetupFunc_part5(){
 	EOCHROOT
 	
 	##Configure swap
+	if [ "$swap_size" != "0" ] && [ -n "$swap_size" ]; then
 	
-	##"plain" required in crypttab to avoid message at boot: "From cryptsetup: couldn't determine device type, assuming default (plain)."
-	crypttab_parameters="/dev/urandom plain,swap,cipher=aes-xts-plain64:sha256,size=512"
+		##"plain" required in crypttab to avoid message at boot: "From cryptsetup: couldn't determine device type, assuming default (plain)."
+		crypttab_parameters="/dev/urandom plain,swap,cipher=aes-xts-plain64:sha256,size=512"
 
-	mdadm_swap_Func(){
-		mdadm_swap_loc="/tmp/multi_disc_swap.sh"
-		mdadm_level="$1" ##ZFS raidz = MDADM raid5, raidz2 = raid6. MDADM does not have raid7, so no triple parity equivalent to raidz3.
-		mdadm_devices="$2" ##Number of disks.
-	
-		cat > "$mdadm_swap_loc" <<-EOF
-			##Swap setup for mirror or raidz topology.
-			apt install --yes mdadm
-
-			##Set MDADM level and number of disks.
-			mdadm --create /dev/md0 --metadata=1.2 \\
-			--level="$mdadm_level" \\
-			--raid-devices="$mdadm_devices" \\
-		EOF
-	
-		##Add swap disks.
-		while IFS= read -r diskidnum;
-		do
-			echo "/dev/disk/by-id/${diskidnum}-part2 \\" >> "$mdadm_swap_loc"
-		done < /tmp/diskid_check_root.txt
+		mdadm_swap_Func(){
+			mdadm_swap_loc="/tmp/multi_disc_swap.sh"
+			mdadm_level="$1" ##ZFS raidz = MDADM raid5, raidz2 = raid6. MDADM does not have raid7, so no triple parity equivalent to raidz3.
+			mdadm_devices="$2" ##Number of disks.
 		
-		sed -i '$s,\\,,' "$mdadm_swap_loc" ##Remove escape characters needed for last line of EOF code block.
+			cat > "$mdadm_swap_loc" <<-EOF
+				##Swap setup for mirror or raidz topology.
+				apt install --yes mdadm
 
-		##Update fstab and cryptsetup.
-		if [ -n "$zfs_root_password" ];
-		then
-			cat >> "$mdadm_swap_loc" <<-EOF
-				apt install --yes cryptsetup
-				echo swap /dev/md0 ${crypttab_parameters} >> /etc/crypttab
-				echo /dev/mapper/swap none swap defaults 0 0 >> /etc/fstab
+				##Set MDADM level and number of disks.
+				mdadm --create /dev/md0 --metadata=1.2 \\
+				--level="$mdadm_level" \\
+				--raid-devices="$mdadm_devices" \\
 			EOF
-		else
-			cat >> "$mdadm_swap_loc" <<-EOF
-				mkswap -f /dev/md0
-				blkid_md0=""
-				blkid_md0="\$(blkid -s UUID -o value /dev/md0)"
-				echo /dev/disk/by-uuid/\${blkid_md0} none swap defaults 0 0 >> /etc/fstab
-			EOF
-		fi
-
-		##Update mdadm configuration file
-		cat >> "$mdadm_swap_loc" <<-EOF
-			mdadm --detail --scan --verbose | tee -a /etc/mdadm/mdadm.conf
-		EOF
-
-		##Check MDADM status.
-		cat >> "$mdadm_swap_loc" <<-EOF
-			cat /proc/mdstat
-			mdadm --detail /dev/md0
-		EOF
 		
-		##Copy MDADM setup file into chroot and run. 
-		cp "$mdadm_swap_loc" "$mountpoint"/tmp/
-		chroot "$mountpoint" /bin/bash -x "$mdadm_swap_loc"
-	}
-	
-	case "$topology_root" in
-		single)
-			if [ -n "$zfs_root_password" ];
-			then
-				DISKID="$(cat /tmp/diskid_check_root.txt)"
-				chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-					apt install --yes cryptsetup
-					echo swap /dev/disk/by-id/"$DISKID"-part2 ${crypttab_parameters} >> /etc/crypttab
-					echo /dev/mapper/swap none swap defaults 0 0 >> /etc/fstab
-				EOCHROOT
-			else
-				blkid_part2=""
-				DISKID="$(cat /tmp/diskid_check_root.txt)"
-				chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-					mkswap -f /dev/disk/by-id/"$DISKID"-part2
-					blkid_part2="\$(blkid -s UUID -o value /dev/disk/by-id/$DISKID-part2)"
-					echo /dev/disk/by-uuid/\${blkid_part2} none swap defaults 0 0 >> /etc/fstab
-					sleep 2
-					swapon -a
-				EOCHROOT
-			fi
-		;;
-
-		mirror)
-			##mdadm --level=mirror is the same as --level=1.
-			mdadm_swap_Func "mirror" "$disks_root"
-		;;
-
-		raid0)
-			##No need for RAID0 for swap. The kernel supports stripe swapping on multiple devices if given the same priority in fstab.
-			##https://raid.wiki.kernel.org/index.php/Why_RAID%3F#Swapping_on_RAID
-
-			loop_counter="$(mktemp)"
-			echo 0 > "$loop_counter" ##Assign starting counter value.
+			##Add swap disks.
 			while IFS= read -r diskidnum;
 			do
-				i="$(cat "$loop_counter")"
-				echo "$i"
-				swap_part_num="swap$i"
+				echo "/dev/disk/by-id/${diskidnum}-part2 \\" >> "$mdadm_swap_loc"
+			done < /tmp/diskid_check_root.txt
+			
+			sed -i '$s,\\,,' "$mdadm_swap_loc" ##Remove escape characters needed for last line of EOF code block.
 
+			##Update fstab and cryptsetup.
+			if [ -n "$zfs_root_password" ];
+			then
+				cat >> "$mdadm_swap_loc" <<-EOF
+					apt install --yes cryptsetup
+					echo swap /dev/md0 ${crypttab_parameters} >> /etc/crypttab
+					echo /dev/mapper/swap none swap defaults 0 0 >> /etc/fstab
+				EOF
+			else
+				cat >> "$mdadm_swap_loc" <<-EOF
+					mkswap -f /dev/md0
+					blkid_md0=""
+					blkid_md0="\$(blkid -s UUID -o value /dev/md0)"
+					echo /dev/disk/by-uuid/\${blkid_md0} none swap defaults 0 0 >> /etc/fstab
+				EOF
+			fi
+
+			##Update mdadm configuration file
+			cat >> "$mdadm_swap_loc" <<-EOF
+				mdadm --detail --scan --verbose | tee -a /etc/mdadm/mdadm.conf
+			EOF
+
+			##Check MDADM status.
+			cat >> "$mdadm_swap_loc" <<-EOF
+				cat /proc/mdstat
+				mdadm --detail /dev/md0
+			EOF
+			
+			##Copy MDADM setup file into chroot and run. 
+			cp "$mdadm_swap_loc" "$mountpoint"/tmp/
+			chroot "$mountpoint" /bin/bash -x "$mdadm_swap_loc"
+		}
+		
+		case "$topology_root" in
+			single)
 				if [ -n "$zfs_root_password" ];
 				then
-					echo "${swap_part_num}" /dev/disk/by-id/"${diskidnum}"-part2 ${crypttab_parameters} >> ${mountpoint}/etc/crypttab
-					echo /dev/mapper/"${swap_part_num}" none swap defaults,pri=1 0 0 >> ${mountpoint}/etc/fstab
-
+					DISKID="$(cat /tmp/diskid_check_root.txt)"
+					chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+						apt install --yes cryptsetup
+						echo swap /dev/disk/by-id/"$DISKID"-part2 ${crypttab_parameters} >> /etc/crypttab
+						echo /dev/mapper/swap none swap defaults 0 0 >> /etc/fstab
+					EOCHROOT
 				else
-					mkswap -f /dev/disk/by-id/${diskidnum}-part2
 					blkid_part2=""
-					blkid_part2="$(blkid -s UUID -o value /dev/disk/by-id/${diskidnum}-part2)"
-					echo /dev/disk/by-uuid/${blkid_part2} none swap defaults,pri=1 0 0 >> ${mountpoint}/etc/fstab
+					DISKID="$(cat /tmp/diskid_check_root.txt)"
+					chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+						mkswap -f /dev/disk/by-id/"$DISKID"-part2
+						blkid_part2="\$(blkid -s UUID -o value /dev/disk/by-id/$DISKID-part2)"
+						echo /dev/disk/by-uuid/\${blkid_part2} none swap defaults 0 0 >> /etc/fstab
+						sleep 2
+						swapon -a
+					EOCHROOT
 				fi
+			;;
 
-				i=$((i + 1)) ##Increment counter.
-				echo "$i" > "$loop_counter"
+			mirror)
+				##mdadm --level=mirror is the same as --level=1.
+				mdadm_swap_Func "mirror" "$disks_root"
+			;;
 
-			done < /tmp/diskid_check_root.txt
-		;;
+			raid0)
+				##No need for RAID0 for swap. The kernel supports stripe swapping on multiple devices if given the same priority in fstab.
+				##https://raid.wiki.kernel.org/index.php/Why_RAID%3F#Swapping_on_RAID
 
-		raidz1)
-			mdadm_swap_Func "5" "$disks_root"
-		;;
+				loop_counter="$(mktemp)"
+				echo 0 > "$loop_counter" ##Assign starting counter value.
+				while IFS= read -r diskidnum;
+				do
+					i="$(cat "$loop_counter")"
+					echo "$i"
+					swap_part_num="swap$i"
 
-		raidz2)
-			mdadm_swap_Func "6" "$disks_root"
-		;;
+					if [ -n "$zfs_root_password" ];
+					then
+						echo "${swap_part_num}" /dev/disk/by-id/"${diskidnum}"-part2 ${crypttab_parameters} >> ${mountpoint}/etc/crypttab
+						echo /dev/mapper/"${swap_part_num}" none swap defaults,pri=1 0 0 >> ${mountpoint}/etc/fstab
 
-		raidz3)
-			##mdadm has no equivalent raid7 to raidz3. Use raid6.
-			mdadm_swap_Func "6" "$disks_root"
-		;;
+					else
+						mkswap -f /dev/disk/by-id/${diskidnum}-part2
+						blkid_part2=""
+						blkid_part2="$(blkid -s UUID -o value /dev/disk/by-id/${diskidnum}-part2)"
+						echo /dev/disk/by-uuid/${blkid_part2} none swap defaults,pri=1 0 0 >> ${mountpoint}/etc/fstab
+					fi
 
-		*)
-			echo "Pool topology not recognised. Check pool topology variable."
-			exit 1
-		;;
+					i=$((i + 1)) ##Increment counter.
+					echo "$i" > "$loop_counter"
 
-	esac
+				done < /tmp/diskid_check_root.txt
+			;;
+
+			raidz1)
+				mdadm_swap_Func "5" "$disks_root"
+			;;
+
+			raidz2)
+				mdadm_swap_Func "6" "$disks_root"
+			;;
+
+			raidz3)
+				##mdadm has no equivalent raid7 to raidz3. Use raid6.
+				mdadm_swap_Func "6" "$disks_root"
+			;;
+
+			*)
+				echo "Pool topology not recognised. Check pool topology variable."
+				exit 1
+			;;
+
+		esac
+	fi
 	
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		##Mount a tmpfs to /tmp
