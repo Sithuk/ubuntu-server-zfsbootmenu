@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2025-12-26
+##Script date: 2026-02-07
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -57,6 +57,7 @@ EFI_boot_size="512" #EFI boot loader partition size in mebibytes (MiB).
 swap_size="500" #Swap partition size in mebibytes (MiB). Size of swap will be larger than defined here with Raidz topologies.
 datapool="datapool" #Non-root drive data pool name.
 topology_data="single" #"single", "mirror", "raid0", "raidz1", "raidz2", or "raidz3" topology on data pool.
+# shellcheck disable=SC2034 #disks_data used indirectly via eval in topology_min_disk_check()
 disks_data="1" #Number of disks in array for data pool. Not used with single topology.
 zfs_data_password="testtest" #If no root pool password is set, a data pool password can be set here. Minimum 8 characters. "" for no password protection.
 zfs_data_encrypt="native" #Encryption type. "native" for native zfs encryption. "luks" for luks. Required if there is a data pool password, otherwise ignored.
@@ -126,7 +127,7 @@ live_desktop_check(){
 
 	##Check live desktop version
 	live_desktop_version="$( . /etc/os-release && echo ${VERSION_CODENAME} )"
-	if [ $(echo "${live_desktop_version}" | tr '[:upper:]' '[:lower:]') = $(echo "${ubuntuver}" | tr '[:upper:]' '[:lower:]') ];
+	if [ "$(echo "${live_desktop_version}" | tr '[:upper:]' '[:lower:]')" = "$(echo "${ubuntuver}" | tr '[:upper:]' '[:lower:]')" ];
 	then
 		echo "Live environment version test passed."
 	else
@@ -659,7 +660,7 @@ create_zpool_Func(){
 						luks_dmname=${luks_dmname_base}$i
 						
 						##Check for luks device name conflict
-						while [ $(find /dev/mapper -name ${luks_dmname} | wc -l) = 1 ];
+						while [ "$(find /dev/mapper -name ${luks_dmname} | wc -l)" = 1 ];
 						do
 							i=$((i + 1)) ##Increment counter.
 							luks_dmname=${luks_dmname_base}$i
@@ -1308,7 +1309,7 @@ remote_zbm_access_Func(){
 			echo "Zfsbootmenu remote access installed. Connect as root on port 222 during boot: \"ssh root@{IP_ADDRESS or FQDN of zfsbootmenu} -p 222\""
 			echo "Your SSH public key must be placed in \"/home/$user/.ssh/authorized_keys\" prior to reboot or remote access will not work."
 			echo "You can add your remote user key using the following command from the remote user's terminal if openssh-server is active on the host."
-			echo "\"ssh-copy-id -i ~/.ssh/id_rsa.pub $user@{IP_ADDRESS or FQDN of the server}\""
+			echo "\"ssh-copy-id -i $user@{IP_ADDRESS or FQDN of the server}\""
 			echo "Run \"sudo generate-zbm\" after copying across the remote user's public ssh key into the authorized_keys file."
 		fi
 	;;
@@ -1831,6 +1832,10 @@ usersetup(){
 		chown -R "$user":"$user" /home/"$user"
 		usermod -a -G adm,cdrom,dip,lpadmin,lxd,plugdev,sambashare,sudo "$user"
 		echo -e "$user:$PASSWORD" | chpasswd
+
+		##Disable root login with password. Login as root with SSH key is possible if configured.
+		##https://help.ubuntu.com/community/RootSudo
+		passwd -dl root
 	
 	EOCHROOT
 }
@@ -2394,7 +2399,7 @@ update_date_time(){
 			if systemctl is-active chrony
 			then
 				chronyc burst 4/4 #Requests up to 4 good measurements (and up to 4 total attempts) from all configured sources.
-				sleep 10 ##Allow time for burst to complete.
+				sleep 5 ##Allow time for burst to complete.
 				chronyc makestep #Update the system clock.
 				
 				##Check status
@@ -2409,7 +2414,7 @@ update_date_time(){
 	
 	timedatectl set-ntp false
 	timedatectl set-ntp true
-	sleep 5
+	sleep 10
 	timedatectl
 }
 update_date_time
