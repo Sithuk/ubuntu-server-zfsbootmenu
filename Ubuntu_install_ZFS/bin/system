@@ -63,11 +63,11 @@ zfsbootmenu_install_config_Func() {
 			cd /usr/local/src/zfsbootmenu
 
 			zbm_release="git" ## "git" for git master, "release" for latest release.
-			case "${zbm_release}" in
+			case "\${zbm_release}" in
 				git) git clone https://github.com/zbm-dev/zfsbootmenu . ;;
 				release)
-					latest_tar="$(curl -s https://api.github.com/repos/zbm-dev/zfsbootmenu/releases/latest | grep tarball | cut -d : -f 2,3 | tr -d \" | sed 's/^[ \t]*//;s/,//')"
-					curl -L "${latest_tar}" | tar -zxv --strip-components=1 -f -
+					latest_tar="\$(curl -s https://api.github.com/repos/zbm-dev/zfsbootmenu/releases/latest | grep tarball | cut -d : -f 2,3 | tr -d \" | sed 's/^[ \t]*//;s/,//')"
+					curl -L "\${latest_tar}" | tar -zxv --strip-components=1 -f -
 				;;
 				*) exit 1 ;;
 			esac
