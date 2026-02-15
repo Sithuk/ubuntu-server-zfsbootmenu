@@ -69,22 +69,22 @@ update_date_time
 
 case "${1-default}" in
     initial)
-        echo "Running initial system installation. Press Enter to Continue or CTRL+C to abort."
+        user_action_banner "Starting initial system installation.\n  Press ENTER to CONTINUE or CTRL+C to ABORT."
         read -r _
         initialinstall
     ;;
     postreboot)
-        echo "Running postreboot setup. Press Enter to Continue or CTRL+C to abort."
+        user_action_banner "Starting postreboot setup.\n  Press ENTER to CONTINUE or CTRL+C to ABORT."
         read -r _
         postreboot
     ;;
     reinstall-zbm)
-        echo "Re-installing zfsbootmenu. Press Enter to Continue or CTRL+C to abort."
+        user_action_banner "Re-installing zfsbootmenu.\n  Press ENTER to CONTINUE or CTRL+C to ABORT."
         read -r _
         reinstall-zbm
     ;;
     reinstall-pyznap)
-        echo "Re-installing pyznap. Press Enter to Continue or CTRL+C to abort."
+        user_action_banner "Re-installing pyznap.\n  Press ENTER to CONTINUE or CTRL+C to ABORT."
         read -r _
         reinstall-pyznap
     ;;

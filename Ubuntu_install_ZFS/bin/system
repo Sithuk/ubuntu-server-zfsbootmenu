@@ -336,7 +336,8 @@ reinstall-zbm() {
     echo "Installed ZFSBootMenu version: $installed_v"
 
     if [ "$latest_v" = "$installed_v" ]; then
-        read -r -p "Latest version is already installed. Re-install anyway? (y/N): " choice
+        user_action_banner "Latest ZBM version is already installed.\n  Re-install anyway? (y/N)"
+        read -r -p "Select option: " choice
         case "$choice" in
             [Yy]*) zfsbootmenu_install_config_Func "base" ;;
             *) echo "Exiting."; exit 0 ;;

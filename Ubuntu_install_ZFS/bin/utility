@@ -75,3 +75,12 @@ update_date_time() {
     sleep 10
     timedatectl
 }
+user_action_banner() {
+    local msg="$1"
+    echo -e "\n\e[1;33m" # Bold Yellow
+    echo "################################################################"
+    echo "  USER ACTION REQUIRED:"
+    echo "  $msg"
+    echo "################################################################"
+    echo -e "\e[0m\n"
+}

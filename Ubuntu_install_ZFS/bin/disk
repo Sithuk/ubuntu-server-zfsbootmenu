@@ -9,7 +9,7 @@ getdiskID() {
         diskidmenu_loc="/tmp/diskidmenu.txt"
         ls -la /dev/disk/by-id | awk '{ print $9, $11 }' | sed -e '1,3d' | grep -v "part\|CD-ROM" > "$diskidmenu_loc"
         
-        echo "Please enter Disk ID option for disk $diskidnum of $total_discs on $pool pool."
+        user_action_banner "Select Disk ID option for disk $diskidnum of $total_discs on $pool pool."
         nl "$diskidmenu_loc"
         count="$(wc -l "$diskidmenu_loc" | cut -f 1 -d' ')"
         n=""
@@ -46,7 +46,7 @@ getdiskID_pool() {
     ## Check that number of disks meets minimum number for selected topology.
     topology_min_disk_check "$pool"
 
-    echo "Carefully enter the ID of the disk(s) YOU WANT TO DESTROY in the next step to ensure no data is accidentally lost."
+    user_action_banner "Carefully select the disk(s) YOU WANT TO DESTROY.\n  Ensure no data is accidentally lost!"
     
     ## Create temp file to check for duplicated disk ID entry.
     true > "/tmp/diskid_check_${pool}.txt"
