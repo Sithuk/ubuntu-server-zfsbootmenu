@@ -211,7 +211,7 @@ EOCHROOT
 
     chroot "$mountpoint" /bin/bash -x <<-EOCHROOT					
 		cmd="spl_hostid=\$( hostid ) ro"
-		[ "$quiet_boot" = "yes" ] && cmd="\$cmd quiet"
+		if [ "$quiet_boot" = "yes" ]; then cmd="\$cmd quiet"; fi
 		zfs set org.zfsbootmenu:commandline="\$cmd" "$RPOOL/ROOT"
 EOCHROOT
 
@@ -222,7 +222,7 @@ EOCHROOT
 			"Boot default"  "zbm.timeout=$timeout_zbm_no_remote_access ro quiet loglevel=0"
 			"Boot to menu"  "zbm.show ro quiet loglevel=0"
 		REFIND
-		[ "$quiet_boot" = "no" ] && sed -i 's,ro quiet,ro,' /boot/efi/EFI/ubuntu/refind_linux.conf
+		if [ "$quiet_boot" = "no" ]; then sed -i 's,ro quiet,ro,' /boot/efi/EFI/ubuntu/refind_linux.conf; fi
 EOCHROOT
     
     case "$topology_root" in
