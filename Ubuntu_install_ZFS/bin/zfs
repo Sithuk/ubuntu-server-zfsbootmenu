@@ -13,7 +13,7 @@ create_zpool_Func() {
     case "$pool" in
         root)
             ashift="$zfs_rpool_ashift"
-            zpool_partition="-part3"
+            zpool_partition="-part2"
             zpool_name="$RPOOL"
             topology_pool="${topology_root}"
         ;;
@@ -84,27 +84,6 @@ mountpointsFunc() {
     zfs mount "$RPOOL/ROOT/$rootzfs_full_name"
     zpool set bootfs="$RPOOL/ROOT/$rootzfs_full_name" "$RPOOL"
     
-    zfs create "$RPOOL/srv"
-    zfs create -o canmount=off "$RPOOL/usr"
-    zfs create "$RPOOL/usr/local"
-    zfs create -o canmount=off "$RPOOL/var" 
-    zfs create -o canmount=off "$RPOOL/var/lib"
-    zfs create "$RPOOL/var/games"
-    zfs create "$RPOOL/var/log"
-    zfs create "$RPOOL/var/mail"
-    zfs create "$RPOOL/var/snap"
-    zfs create "$RPOOL/var/spool"
-    zfs create "$RPOOL/var/www"
-    
-    zfs create "$RPOOL/home"
-    zfs create -o mountpoint=/root "$RPOOL/home/root"
-    chmod 700 "$mountpoint/root"
-
-    zfs create -o com.sun:auto-snapshot=false "$RPOOL/var/cache"
-    zfs create -o com.sun:auto-snapshot=false "$RPOOL/var/tmp"
-    chmod 1777 "$mountpoint/var/tmp"
-    zfs create -o com.sun:auto-snapshot=false "$RPOOL/var/lib/docker"
-
     mkdir -p "$mountpoint/run"
     mount -t tmpfs tmpfs "$mountpoint/run"
 }

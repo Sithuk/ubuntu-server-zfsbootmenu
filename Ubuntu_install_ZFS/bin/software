@@ -161,22 +161,3 @@ reinstall-pyznap() {
     rm -rf /opt/pyznap /etc/pyznap/pyznap.conf
     pyznapinstall
 }
-
-createdatapool() {
-    getdiskID_pool "data"
-    clear_partition_table "data"
-    partprobe && sleep 2
-    mkdir -p "$datapoolmount"
-    chown "$user":"$user" "$datapoolmount"
-    touch "/etc/zfs/zfs-list.cache/$datapool"
-    create_zpool_Func "data"
-    
-    count=0
-    while [ ! -s "/etc/zfs/zfs-list.cache/$datapool" ] && [ $count -lt 60 ]; do
-        zfs set canmount=on "$datapool"
-        sleep 1
-        count=$((count + 1))
-    done
-    ln -sf "$datapoolmount" "/home/$user/"
-    chown -R "$user":"$user" "$datapoolmount" "/home/$user/$(basename "$datapoolmount")"
-}

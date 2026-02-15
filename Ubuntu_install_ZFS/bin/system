@@ -180,6 +180,16 @@ EOCHROOT
 		echo REMAKE_INITRD=yes > /etc/dkms/zfs.conf
 		sed -i 's,LOAD_KEXEC=false,LOAD_KEXEC=true,' /etc/default/kexec
 EOCHROOT
+
+    ## Format and Mount unmanaged ext4 partition
+    while IFS= read -r diskidnum; do
+        mkfs.ext4 -F "/dev/disk/by-id/${diskidnum}-part3"
+        blkid_part3="$(blkid -s UUID -o value "/dev/disk/by-id/${diskidnum}-part3")"
+        chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+			mkdir -p "${ext4_data_mount}"
+			echo "UUID=$blkid_part3 ${ext4_data_mount} ext4 defaults 0 2" >> /etc/fstab
+EOCHROOT
+    done < /tmp/diskid_check_root.txt
 }
 
 systemsetupFunc_part4() {
@@ -335,8 +345,6 @@ unmount_datasets() {
 
 usersetup() {
 	## Create user account and setup groups
-	zfs create -o mountpoint=/home/"$user" "$RPOOL/home/${user}"
-
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		## gecos parameter disabled asking for finger info
 		adduser --disabled-password --gecos "" "$user"

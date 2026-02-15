@@ -9,13 +9,13 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Source configuration and modules
 source "$PROJECT_ROOT/config.sh"
-source "$PROJECT_ROOT/bin/utility.sh"
-source "$PROJECT_ROOT/bin/checks.sh"
-source "$PROJECT_ROOT/bin/disk.sh"
-source "$PROJECT_ROOT/bin/apt.sh"
-source "$PROJECT_ROOT/bin/zfs.sh"
-source "$PROJECT_ROOT/bin/system.sh"
-source "$PROJECT_ROOT/bin/software.sh"
+source "$PROJECT_ROOT/bin/utility"
+source "$PROJECT_ROOT/bin/checks"
+source "$PROJECT_ROOT/bin/disk"
+source "$PROJECT_ROOT/bin/apt"
+source "$PROJECT_ROOT/bin/zfs"
+source "$PROJECT_ROOT/bin/system"
+source "$PROJECT_ROOT/bin/software"
 
 initialinstall() {
     disclaimer
@@ -78,11 +78,6 @@ case "${1-default}" in
         read -r _
         postreboot
     ;;
-    datapool)
-        echo "Running create data pool on non-root drive. Press Enter to Continue or CTRL+C to abort."
-        read -r _
-        createdatapool
-    ;;
     reinstall-zbm)
         echo "Re-installing zfsbootmenu. Press Enter to Continue or CTRL+C to abort."
         read -r _
@@ -94,7 +89,7 @@ case "${1-default}" in
         reinstall-pyznap
     ;;
     *)
-        printf "%s\n%s\n%s\n" "-----" "Usage: $0 initial | postreboot | datapool | reinstall-zbm | reinstall-pyznap" "-----"
+        printf "%s\n%s\n%s\n" "-----" "Usage: $0 initial | postreboot | reinstall-zbm | reinstall-pyznap" "-----"
     ;;
 esac
 

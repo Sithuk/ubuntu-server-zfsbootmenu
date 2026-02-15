@@ -12,6 +12,7 @@ hostname="ubuntu"            # Hostname for the system
 # ZFS Root Pool Configuration
 RPOOL="rpool"                # Root pool name
 zfs_rpool_ashift="12"        # ashift=9 (512B), 12 (4KiB), 13 (8KiB)
+zfs_root_size="50G"          # Fixed size for ZFS root partition (e.g., 50G, 100G)
 topology_root="single"       # "single", "mirror", "raid0", "raidz1", "raidz2", "raidz3"
 disks_root="1"               # Number of disks for root pool (ignored for single)
 
@@ -19,12 +20,8 @@ disks_root="1"               # Number of disks for root pool (ignored for single
 EFI_boot_size="512"          # EFI partition size in MiB
 swap_size="500"              # Swap partition size in MiB
 
-# ZFS Data Pool Configuration
-datapool="datapool"          # Data pool name
-datapoolmount="/mnt/$datapool" # Data pool mount point
-zfs_dpool_ashift="12"        # ashift for data pool
-topology_data="single"       # Topology for data pool
-disks_data="1"               # Number of disks for data pool
+# Unmanaged Data Partition Configuration
+ext4_data_mount="/data"      # Mount point for the unmanaged ext4 partition
 
 # ZFS General settings
 zfs_compression="zstd"       # "lz4" or "zstd"

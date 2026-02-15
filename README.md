@@ -1,110 +1,90 @@
-# Ubuntu zfsbootmenu install script
+# Ubuntu ZFS Installation Script (Modular & Unencrypted)
 
-This script creates an Ubuntu installation using the ZFS filesystem. The installation has integrated snapshot management using sanoid. Snapshots can be rolled back remotely at boot over ssh using zfsbootmenu. This is useful where there is no physical access to the machine.
+This project provides a robust, modular script to install Ubuntu (Server or Desktop) on a ZFS root filesystem with **ZFSBootMenu** for advanced boot management and snapshot rollback support. It is designed for users who want the power of ZFS combined with a fast, unencrypted installation process.
 
-Snapshots allow you to rollback your system to a previous state if there is a problem. The system automatically creates snapshots on a timer and also when the system is updated with apt. Snapshots are pruned over time to keep fewer older snapshots.
+## Key Features
 
-Supports:
-- Ubuntu 22.04, 24.04.
-- Root filesystem on ZFS.
-- Choose from: Ubuntu Server, Ubuntu Desktop, Kubuntu, Xubuntu, Budgie, and Ubuntu MATE.
-- Single, mirror, raid0, raidz1, raidz2, and raidz3 topologies.
-- LUKS and native ZFS encryption.
-- Remote unlocking of encrypted pools at boot over SSH.
-- Automated system snapshots taken on a timer and also on system updates. 
-- Remote rollback of snapshots at boot for system recovery over SSH.
-- Creation of a separate encrypted data pool (single/mirror/raidz).
+- **Ubuntu Support**: Verified for Ubuntu 22.04 (Jammy) and 24.04 (Noble).
+- **ZFS-on-Root**: Fully automated partitioning and ZFS pool/dataset creation.
+- **Modular Design**: Refactored into a clean, modular structure for easier maintenance and customization.
+- **ZFSBootMenu Integrated**: Boot directly from ZFS datasets with support for snapshot rollback and boot environment management.
+- **Snapshot Management**: Integrated `sanoid` for automated snapshots and `pyznap` support.
+- **Variant Selection**: Install Ubuntu Server, Desktop, Kubuntu, Xubuntu, Budgie, or MATE.
+- **High Performance**: Optimized for unencrypted ZFS performance without the overhead of LUKS or native ZFS encryption.
+
+## Project Structure
+
+The script has been split into a main execution script, a configuration file, and several functional modules:
+
+- `install.sh`: The main entry point for the installation process.
+- `config.sh`: Centralized configuration for user settings, disk topology, and system preferences.
+- `bin/`: Contains the logic modules:
+    - `apt`: APT source management and IPv6 fixes.
+    - `checks`: Pre-flight environment and hardware checks.
+    - `disk`: Drive partitioning and formatting logic.
+    - `software`: Post-install software and variant-specific packages.
+    - `system`: Core system installation, chroot setup, and bootloader configuration.
+    - `utility`: Shared logging and helper functions.
+    - `zfs`: ZPOOL and dataset creation logic.
 
 ## Usage
-Boot the system with an Ubuntu live desktop iso. Use an Ubuntu iso to boot from even if installing a different Ubuntu flavour such as Kubuntu. Start the terminal (Ctrl+Alt+T) and enter the following.
 
-	git clone https://github.com/Sithuk/ubuntu-server-zfsbootmenu.git ~/ubuntu-server-zfsbootmenu
-    cd ~/ubuntu-server-zfsbootmenu
-    chmod +x ubuntu_server_encrypted_root_zfs.sh
-	
-Edit the variables in the ubuntu_server_encrypted_root_zfs.sh file to your preferences.
+### 1. Preparation
+Boot your system with an Ubuntu Live Desktop ISO. Open a terminal and clone the repository:
 
-	nano ubuntu_server_encrypted_root_zfs.sh
-	
-Run the "initial" option of the script.
+```bash
+git clone https://github.com/Sithuk/ubuntu-server-zfsbootmenu.git ~/ubuntu-zfs-install
+cd ~/ubuntu-zfs-install/Ubuntu_install_ZFS
+chmod +x install.sh
+```
 
-	./ubuntu_server_encrypted_root_zfs.sh initial
+### 2. Configuration
+Edit `config.sh` to set your username, hostname, disk topology, and other preferences:
 
-Reboot after the initial installation completes and login to the new install. Username and password is as set in the script variables. Then run the second part of the script.
+```bash
+nano config.sh
+```
 
-	./ubuntu_server_encrypted_root_zfs.sh postreboot
+### 3. Initial Installation
+Run the initial phase to partition disks, create pools, and debootstrap the base system:
 
-## Optional: Remote access during boot
-The script includes an optional feature to provide remote access during boot. Remote access over ssh allows the system state to be rolled back to a previous snapshot without physical access to the system. This is helpful to return a system to a bootable state following a failed upgrade.
+```bash
+./install.sh initial
+```
 
-Run the following optional part of the script to enable remote access to zfsbootmenu during boot. Guidance on the use of zfsbootmenu can be found at its project website linked in the credits below.
+### 4. Post-Reboot Setup
+After the initial installation completes, reboot into your new ZFS system and login with the credentials defined in `config.sh`. Then, run the second phase to finalize the configuration and install the chosen Ubuntu variant:
 
-	./ubuntu_server_encrypted_root_zfs.sh remoteaccess
+```bash
+./install.sh postreboot
+```
 
-## Optional: Create a zfs data pool
-The script includes an optional feature to create an encrypted zfs data pool on a non-root drive. The data pool will be unlocked automatically after the root drive password is entered at boot.
+### Optional Actions
+- **Create Data Pool**: To set up an additional ZFS pool on secondary drives:
+  ```bash
+  ./install.sh datapool
+  ```
+- **Re-install ZFSBootMenu**:
+  ```bash
+  ./install.sh reinstall-zbm
+  ```
 
-	./ubuntu_server_encrypted_root_zfs.sh datapool
+## FAQ & Snapshot Management
 
-## FAQ
-Additional guidance and notes can be found in the script.
-1. How do I rollback the system using a snapshot in zfsbootmenu?
+### How do I rollback using a snapshot?
+Reboot into **ZFSBootMenu**:
+1. Select your boot environment and press `Ctrl+S`.
+2. Select the desired snapshot.
+3. Choose **Clone and Promote** (`Ctrl+X`) to create a new bootable environment from the snapshot.
 
-   You can rollback to a snapshot by doing the following, for example if an upgrade does not work and you wish to revert to a previous state. I recommend testing any changes out in a virtual machine first before rolling them out in a production environment.
-   - Reboot and enter zfsbootmenu
-   - Select the boot environment and press Ctrl+S to show the snapshots.
-   - Select the pre-upgrade snapshot and choose one of the following options. Either option will provide the ability to boot into the system as it was pre-upgrade.
-   
-     - Press Enter to create a "duplicate" boot environment. Zfsbootmenu will create a new boot environment that is entirely independent of the upgraded boot environment and its snapshots. The down sides of the duplicate option are that:
-       - it requires sufficient disk space to create the duplicate; and
-       - snapshots linked to the previous boot environment will not be duplicated.
-       
-     - Press Ctrl+X to "clone and promote". Zfsbootmenu will create a new boot environment that will have all the snapshot history up to the point the snapshot was created. The new boot environment will consume little additional space. The zfsbootmenu authors recommend the "clone and promote" option to rollback.
-    
-2. How do I delete a boot environment I no longer need?
-   
-   You can delete a boot environment you no longer need using "zfs destroy". You can do this by booting into a running system or from zfsbootmenu. Zfsbootmenu will list the root datasets that contain a linux kernel on its main menu. You can make a note of the dataset you want to delete from there or you can use "zfs list" from a command line.
+### How do I manage automated snapshots?
+The script installs `sanoid` by default. Configuration can be found in `/etc/sanoid/sanoid.conf`. System updates via `apt` also trigger automatic snapshots for safety.
 
-   - Delete a boot environment from a running system
-       - Use "zfs destroy" to delete the dataset that corresponds to the boot environment. For example, if you want to delete a root dataset called "ubuntu.2022.10.01" then you can enter the command "zfs destroy -r rpool/ROOT/ubuntu.2022.10.01".
+## Credits & Resources
 
-   - Delete a boot environment from zfsbootmenu
-     - From the main menu, select the boot environment you want to destroy. Press CTRL+W to re-import the pool as read/write, then CTRL+R to enter the recovery shell. You can then use "zfs destroy" as in the point above. Press CTRL+D to exit the shell and return to the menu when done.
+- **ZFSBootMenu**: [zfsbootmenu.org](https://zfsbootmenu.org/)
+- **Sanoid**: [github.com/jimsalterjrs/sanoid](https://github.com/jimsalterjrs/sanoid)
+- **OpenZFS**: [openzfs.github.io](https://openzfs.github.io/)
 
-3. Can I upgrade the system normally using do-release-upgrade?
-   - Zfsbootmenu
-   
-     It is possible that upgrading ubuntu will cause a newer zfs version to be installed that is unsupported by zfsbootmenu. The system may not be able to boot if the zfs root pool is upgraded beyond what is supported by zfsbootmenu. Create a test system in a virtual machine first to duplicate your setup and test the upgrade process.
-   - Pyznap
-   
-     A previous version of the script installed pyznap for snapshot management. Pyznap is not included as a package in the ubuntu repos at present. It may need to be re-compiled and re-installed. You can reference the install script for the relevant code to re-compile and re-install. 
-
-4. How do I change the password on a natively encrypted zfs root pool?
-
-   You can change the password of your encrypted root as follows. Change "rpool" to the name of your root pool.
-      - Update root pool password file.
-
-        `nano /etc/zfs/rpool.key`
-      - Update root pool key.
-
-        `zfs change-key -o keylocation=file:///etc/zfs/rpool.key -o keyformat=passphrase rpool`
-      - Optional: If you have an encrypted data pool that unlocks at boot using the root pool password, then update its key too. Change "datapool" to the name of your data pool.
-
-        `zfs change-key -o keylocation=file:///etc/zfs/rpool.key -o keyformat=passphrase datapool`
-      - Update initramfs.
-
-        `update-initramfs -u -k all`
-
-## Discussion threads
-Please use the discussions section. \
-https://github.com/Sithuk/ubuntu-server-zfsbootmenu/discussions
-
-For historical reference, the initial discussion thread can be found on reddit.
-https://www.reddit.com/r/zfs/comments/mj4nfa/ubuntu_server_2104_native_encrypted_root_on_zfs/
-
-## Credits
-ahesford E39M5S62/zdykstra (https://github.com/zbm-dev/zfsbootmenu)
-
-jimsalterjrs (https://github.com/jimsalterjrs/sanoid)
-
-rlaager (https://openzfs.github.io/openzfs-docs/Getting%20Started/Ubuntu/Ubuntu%2022.04%20Root%20on%20ZFS.html)
+---
+*Note: This version of the script focuses on unencrypted ZFS installations for maximum simplicity and speed. For encrypted installations, please refer to the original monolithic script versions.*
