@@ -261,7 +261,7 @@ EOCHROOT
 
 systemsetupFunc_part5() {
     chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		echo -e "root:$PASSWORD" | chpasswd -c SHA256
+		printf "root:$PASSWORD\n" | chpasswd
 EOCHROOT
     
     # Swap setup removed for hybrid layout where part2 is ZFS Root
@@ -321,7 +321,7 @@ usersetup() {
 		cp -a /etc/skel/. "/home/$user"
 		chown -R "$user":"$user" "/home/$user"
 		usermod -a -G adm,cdrom,dip,lpadmin,lxd,plugdev,sambashare,sudo "$user"
-		echo -e "$user:$PASSWORD" | chpasswd
+		printf "$user:$PASSWORD\n" | chpasswd
 
 		## Disable root login with password.
 		passwd -dl root
