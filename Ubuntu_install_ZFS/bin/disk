@@ -80,23 +80,70 @@ getdiskID_pool() {
 clear_partition_table() {
     pool="$1" # root or data
     while IFS= read -r diskidnum; do
-        echo "Clearing partition table on disk ${diskidnum}."
-        sgdisk --zap-all "/dev/disk/by-id/$diskidnum"
+        DRIVE="/dev/disk/by-id/$diskidnum"
+        echo "Performing destructive preparation on disk ${diskidnum}."
+        
+        # Unmounting (umount): Identify and forcibly unmount all partitions
+        echo "Unmounting all partitions on $DRIVE..."
+        grep "^$DRIVE" /proc/mounts | cut -f2 -d" " | sort -r | xargs -r umount -fl || true
+        
+        # Swap Deactivation (swapoff): Disable all swap space
+        echo "Deactivating swap..."
+        swapoff -a || true
+        
+        # Signature Wiping (wipefs): Delete all legacy filesystem signatures
+        echo "Wiping filesystem signatures..."
+        wipefs --all --force "$DRIVE"
+        
+        # MBR Overwrite (dd): Physically destroy partition table and boot sector
+        echo "Overwriting first 10MB of the drive..."
+        dd if=/dev/zero of="$DRIVE" bs=1M count=10 status=progress conv=fsync
+        
+        echo "Clearing partition table with sgdisk..."
+        sgdisk --zap-all "$DRIVE"
     done < "/tmp/diskid_check_${pool}.txt"
 }
 
 partitionsFunc() {
-    # gdisk hex codes: EF02 BIOS boot, EF00 EFI system, 8200 Linux swap, FD00 Linux RAID (or ZFS/LUKS in some cases)
-    # BE00 Solaris boot, BF00 Solaris root (ZFS native/unencrypted)
-    
-    root_hex_code="BF00"
-    
     while IFS= read -r diskidnum; do
-        echo "Creating partitions on disk ${diskidnum}."
-        sgdisk -Z "/dev/disk/by-id/${diskidnum}"
-        sgdisk -n 1:1M:+512M -t 1:EF00 "/dev/disk/by-id/${diskidnum}"
-        sgdisk -n 2:0:+${zfs_root_size} -t 2:BF01 "/dev/disk/by-id/${diskidnum}"
-        sgdisk -n 3:0:0 -t 3:8300 "/dev/disk/by-id/${diskidnum}"
+        DRIVE="/dev/disk/by-id/${diskidnum}"
+        echo "Creating partitions on disk ${diskidnum} using sequential layout."
+        
+        # Label Initialization
+        parted -s "$DRIVE" mklabel gpt
+        
+        CURRENT=1 # Start at 1MB for alignment
+        
+        add_part() {
+            local name="$1"
+            local size="$2"
+            local type="$3"
+            local end
+            
+            if [ "$size" = "0" ] || [ "$size" = "max" ]; then
+                end="100%"
+            else
+                end="$((CURRENT + size))"
+            fi
+            
+            echo "Adding partition: $name ($CURRENT MiB to $end MiB)"
+            if [ "$end" = "100%" ]; then
+                parted -s "$DRIVE" mkpart "$name" "${CURRENT}MiB" 100%
+            else
+                parted -s "$DRIVE" mkpart "$name" "${CURRENT}MiB" "${end}MiB"
+                CURRENT=$end
+            fi
+        }
+
+        # 1: EFI System Partition (512MB)
+        add_part "EFI" 512 "EF00"
+        
+        # 2: ZFS Root (Size from config)
+        add_part "ZFS" "$zfs_root_size" "BF01"
+        
+        # 3: Unmanaged Space (Remainder)
+        add_part "DATA" "max" "8300"
+        
     done < "/tmp/diskid_check_root.txt"
     partprobe
     sleep 2
