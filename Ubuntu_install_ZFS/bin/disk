@@ -89,14 +89,6 @@ partitionsFunc() {
     # gdisk hex codes: EF02 BIOS boot, EF00 EFI system, 8200 Linux swap, FD00 Linux RAID (or ZFS/LUKS in some cases)
     # BE00 Solaris boot, BF00 Solaris root (ZFS native/unencrypted)
     
-    case "$topology_root" in
-        single|mirror) swap_hex_code="8200" ;;
-        raid0|raidz*)  swap_hex_code="FD00" ;;
-        *)
-            echo "topology_root variable not recognised."
-            exit 1
-        ;;
-    
     root_hex_code="BF00"
     
     while IFS= read -r diskidnum; do

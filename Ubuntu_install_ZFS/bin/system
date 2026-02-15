@@ -253,26 +253,7 @@ systemsetupFunc_part5() {
 		echo -e "root:$PASSWORD" | chpasswd -c SHA256
 EOCHROOT
     
-    crypttab_parameters="/dev/urandom plain,swap,cipher=aes-xts-plain64:sha256,size=512"
-    case "$topology_root" in
-        single)
-            DISKID="$(cat /tmp/diskid_check_root.txt)"
-            mdadm_level="mirror"
-            [ "$topology_root" = "raidz1" ] && mdadm_level="5"
-            [ "$topology_root" = "raidz2" ] && mdadm_level="6"
-            [ "$topology_root" = "raidz3" ] && mdadm_level="6"
-            mdadm_swap_Func "$mdadm_level" "$disks_root"
-        ;;
-        raid0)
-            i=0
-            while IFS= read -r diskidnum; do
-                mkswap -f "/dev/disk/by-id/${diskidnum}-part2"
-                uuid="$(blkid -s UUID -o value "/dev/disk/by-id/${diskidnum}-part2")"
-                echo "/dev/disk/by-uuid/$uuid none swap defaults,pri=1 0 0" >> "${mountpoint}/etc/fstab"
-                i=$((i + 1))
-            done < /tmp/diskid_check_root.txt
-        ;;
-    esac
+    # Swap setup removed for hybrid layout where part2 is ZFS Root
     
     chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		cp /usr/share/systemd/tmp.mount /etc/systemd/system/
@@ -284,28 +265,6 @@ EOCHROOT
 EOCHROOT
 }
 
-mdadm_swap_Func() {
-    mdadm_level="$1"
-    mdadm_devices="$2"
-    mdadm_swap_loc="/tmp/multi_disc_swap.sh"
-    cat > "$mdadm_swap_loc" <<-EOF
-		apt install --yes mdadm
-		mdadm --create /dev/md0 --metadata=1.2 --level="$mdadm_level" --raid-devices="$mdadm_devices" \\
-	EOF
-    while IFS= read -r diskidnum; do
-        echo "/dev/disk/by-id/${diskidnum}-part2 \\" >> "$mdadm_swap_loc"
-    done < /tmp/diskid_check_root.txt
-    sed -i '$s,\\,,' "$mdadm_swap_loc"
-    
-    cat >> "$mdadm_swap_loc" <<-EOF
-		mkswap -f /dev/md0
-		uuid="\$(blkid -s UUID -o value /dev/md0)"
-		echo "/dev/disk/by-uuid/\$uuid none swap defaults 0 0" >> /etc/fstab
-	EOF
-    echo "mdadm --detail --scan --verbose | tee -a /etc/mdadm/mdadm.conf" >> "$mdadm_swap_loc"
-    cp "$mdadm_swap_loc" "$mountpoint/tmp/"
-    chroot "$mountpoint" /bin/bash -x "/tmp/$(basename "$mdadm_swap_loc")"
-}
 
 
 fixfsmountorder() {

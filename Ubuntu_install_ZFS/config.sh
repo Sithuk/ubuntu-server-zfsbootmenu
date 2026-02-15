@@ -18,7 +18,6 @@ disks_root="1"               # Number of disks for root pool (ignored for single
 
 # Partition Sizes
 EFI_boot_size="512"          # EFI partition size in MiB
-swap_size="500"              # Swap partition size in MiB
 
 # Unmanaged Data Partition Configuration
 ext4_data_mount="/data"      # Mount point for the unmanaged ext4 partition
