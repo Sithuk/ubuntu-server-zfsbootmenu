@@ -81,7 +81,7 @@ clear_partition_table() {
     pool="$1" # root or data
     while IFS= read -r diskidnum; do
         DRIVE="/dev/disk/by-id/$diskidnum"
-        echo "Performing destructive preparation on disk ${diskidnum}."
+        echo "Performing aggressive destructive preparation on disk ${diskidnum}."
         
         # Unmounting (umount): Identify and forcibly unmount all partitions
         echo "Unmounting all partitions on $DRIVE..."
@@ -90,17 +90,37 @@ clear_partition_table() {
         # Swap Deactivation (swapoff): Disable all swap space
         echo "Deactivating swap..."
         swapoff -a || true
+
+        # Stop RAID arrays
+        echo "Stopping RAID arrays..."
+        mdadm --stop --scan || true
+
+        # Clear device-mapper entries (LVM, LUKS, etc.)
+        echo "Clearing device-mapper entries..."
+        dmsetup remove_all --force || true
         
         # Signature Wiping (wipefs): Delete all legacy filesystem signatures
         echo "Wiping filesystem signatures..."
         wipefs --all --force "$DRIVE"
         
-        # MBR Overwrite (dd): Physically destroy partition table and boot sector
+        # MBR/GPT Overwrite (dd): Physically destroy partition table and boot sector
         echo "Overwriting first 10MB of the drive..."
         dd if=/dev/zero of="$DRIVE" bs=1M count=10 status=progress conv=fsync
         
+        # Wipe end of disk (backup GPT header)
+        echo "Wiping end of the drive..."
+        disk_size=$(blockdev --getsize64 "$DRIVE")
+        dd if=/dev/zero of="$DRIVE" bs=1M count=10 seek=$(( (disk_size / 1024 / 1024) - 10 )) status=progress conv=fsync || true
+
+        echo "Settling udev events..."
+        udevadm settle
+        
         echo "Clearing partition table with sgdisk..."
         sgdisk --zap-all "$DRIVE"
+
+        echo "Forcing kernel to reread partition table..."
+        blockdev --rereadpt "$DRIVE" || true
+        partprobe "$DRIVE" || true
     done < "/tmp/diskid_check_${pool}.txt"
 }
 
