@@ -7,16 +7,12 @@ set -euo pipefail
 # Get project root to allow script_copy to find files correctly
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Sanitize project files (convert CRLF to LF) to handle Windows line endings
+echo "Sanitizing project files..."
+find "$PROJECT_ROOT" -type f -not -path "*/.git/*" -exec sed -i 's/\r//g' {} + || true
+
 # Source configuration and modules
 source "$PROJECT_ROOT/config.sh"
-
-# Sanitize critical variables to strip potential carriage returns from Windows-edited files
-user=$(echo "$user" | tr -d '\r')
-PASSWORD=$(echo "$PASSWORD" | tr -d '\r')
-hostname=$(echo "$hostname" | tr -d '\r')
-RPOOL=$(echo "$RPOOL" | tr -d '\r')
-distro_variant=$(echo "$distro_variant" | tr -d '\r')
-ubuntuver=$(echo "$ubuntuver" | tr -d '\r')
 source "$PROJECT_ROOT/bin/utility"
 source "$PROJECT_ROOT/bin/checks"
 source "$PROJECT_ROOT/bin/disk"
