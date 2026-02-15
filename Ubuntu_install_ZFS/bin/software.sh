@@ -162,21 +162,7 @@ reinstall-pyznap() {
     pyznapinstall
 }
 
-setupremoteaccess() {
-    if [ -f /etc/zfsbootmenu/dracut.conf.d/dropbear.conf ]; then
-        echo "Remote access already installed. Cancelled."
-    else 
-        disclaimer
-        remote_zbm_access_Func "base"
-    fi
-}
-
 createdatapool() {
-    disclaimer
-    if zpool status "$datapool" >/dev/null 2>&1; then
-        echo "Warning: $datapool already exists. Continue? (Enter/Ctrl+C)"
-        read -r _
-    fi
     getdiskID_pool "data"
     clear_partition_table "data"
     partprobe && sleep 2
@@ -184,7 +170,6 @@ createdatapool() {
     chown "$user":"$user" "$datapoolmount"
     touch "/etc/zfs/zfs-list.cache/$datapool"
     create_zpool_Func "data"
-    [ "$zfs_data_encrypt" = "luks" ] && update_crypttab_Func "base" "data"
     
     count=0
     while [ ! -s "/etc/zfs/zfs-list.cache/$datapool" ] && [ $count -lt 60 ]; do

@@ -78,11 +78,6 @@ case "${1-default}" in
         read -r _
         postreboot
     ;;
-    remoteaccess)
-        echo "Running remote access to ZFSBootMenu install. Press Enter to Continue or CTRL+C to abort."
-        read -r _
-        setupremoteaccess
-    ;;
     datapool)
         echo "Running create data pool on non-root drive. Press Enter to Continue or CTRL+C to abort."
         read -r _
@@ -99,7 +94,7 @@ case "${1-default}" in
         reinstall-pyznap
     ;;
     *)
-        printf "%s\n%s\n%s\n" "-----" "Usage: $0 initial | postreboot | remoteaccess | datapool | reinstall-zbm | reinstall-pyznap" "-----"
+        printf "%s\n%s\n%s\n" "-----" "Usage: $0 initial | postreboot | datapool | reinstall-zbm | reinstall-pyznap" "-----"
     ;;
 esac
 

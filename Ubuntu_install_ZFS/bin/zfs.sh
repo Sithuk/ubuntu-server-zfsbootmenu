@@ -13,30 +13,12 @@ create_zpool_Func() {
     case "$pool" in
         root)
             ashift="$zfs_rpool_ashift"
-            keylocation="prompt"
-            zpool_password="$zfs_root_password"
-            zpool_encrypt="$zfs_root_encrypt"
             zpool_partition="-part3"
             zpool_name="$RPOOL"
             topology_pool="${topology_root}"
         ;;
         data)
             ashift="$zfs_dpool_ashift"
-            if [ -n "$zfs_root_password" ]; then
-                case "$zfs_root_encrypt" in
-                    native) datapool_keyloc="/etc/zfs/$RPOOL.key" ;;
-                    luks)   datapool_keyloc="/etc/cryptsetup-keys.d/$RPOOL.key" ;;
-                esac
-                keylocation="file://$datapool_keyloc"
-            else
-                if [ -n "$zfs_data_password" ]; then
-                    keylocation="prompt"
-                else
-                    true
-                fi
-            fi
-            zpool_password="$zfs_data_password"
-            zpool_encrypt="$zfs_data_encrypt"
             zpool_partition=""
             zpool_name="$datapool"
             topology_pool="${topology_data}"
@@ -60,13 +42,6 @@ create_zpool_Func() {
         echo -O canmount=off \\ >> "$zpool_create_temp"
     fi
 
-    if [ -n "$zpool_password" ]; then
-        case "$zpool_encrypt" in
-            native)
-                echo "-O encryption=aes-256-gcm -O keylocation=$keylocation -O keyformat=passphrase \\" >> "$zpool_create_temp"
-            ;;
-        esac
-    fi	
     
     case "$pool" in
         root) echo "-O mountpoint=/ -R $mountpoint \\" >> "$zpool_create_temp" ;;
@@ -78,29 +53,7 @@ create_zpool_Func() {
         echo 1 > "$loop_counter"
         
         while IFS= read -r diskidnum; do
-            if [ -n "$zpool_password" ]; then
-                case "$zpool_encrypt" in
-                    native)
-                        echo "/dev/disk/by-id/${diskidnum}${zpool_partition} \\" >> "$zpool_create_temp"
-                    ;;
-                    luks)
-                        echo -e "$zpool_password" | cryptsetup -q luksFormat -c aes-xts-plain64 -s 512 -h sha256 "/dev/disk/by-id/${diskidnum}${zpool_partition}"
-                        i="$(cat "$loop_counter")"
-                        luks_dmname="luks$i"
-                        while [ -e "/dev/mapper/${luks_dmname}" ]; do
-                            i=$((i + 1))
-                            luks_dmname="luks$i"
-                        done
-                        echo -e "$zpool_password" | cryptsetup luksOpen "/dev/disk/by-id/${diskidnum}${zpool_partition}" "${luks_dmname}"
-                        printf "%s\n" "${luks_dmname}" >> "/tmp/luks_dmname_${pool}.txt"
-                        echo "/dev/mapper/${luks_dmname} \\" >> "$zpool_create_temp"
-                        echo "$((i + 1))" > "$loop_counter"
-                    ;;
-                    *) exit 1 ;;
-                esac
-            else
-                echo "/dev/disk/by-id/${diskidnum}${zpool_partition} \\" >> "$zpool_create_temp"
-            fi
+            echo "/dev/disk/by-id/${diskidnum}${zpool_partition} \\" >> "$zpool_create_temp"
         done < "/tmp/diskid_check_$pool".txt
         sed -i '$s,\\,,' "$zpool_create_temp"
     }
@@ -114,7 +67,7 @@ create_zpool_Func() {
         *) exit 1 ;;
     esac
     
-    echo "$zpool_password" | sh "$zpool_create_temp" 
+    sh "$zpool_create_temp" 
 }
 
 debootstrap_createzfspools_Func() {

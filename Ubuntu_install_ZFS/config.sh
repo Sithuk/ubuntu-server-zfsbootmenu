@@ -11,8 +11,6 @@ hostname="ubuntu"            # Hostname for the system
 
 # ZFS Root Pool Configuration
 RPOOL="rpool"                # Root pool name
-zfs_root_password="testtest" # Password for encrypted root pool. "" for no password.
-zfs_root_encrypt="native"    # Encryption type: "native" or "luks"
 zfs_rpool_ashift="12"        # ashift=9 (512B), 12 (4KiB), 13 (8KiB)
 topology_root="single"       # "single", "mirror", "raid0", "raidz1", "raidz2", "raidz3"
 disks_root="1"               # Number of disks for root pool (ignored for single)
@@ -24,8 +22,6 @@ swap_size="500"              # Swap partition size in MiB
 # ZFS Data Pool Configuration
 datapool="datapool"          # Data pool name
 datapoolmount="/mnt/$datapool" # Data pool mount point
-zfs_data_password="testtest" # Data pool password
-zfs_data_encrypt="native"    # Encryption type: "native" or "luks"
 zfs_dpool_ashift="12"        # ashift for data pool
 topology_data="single"       # Topology for data pool
 disks_data="1"               # Number of disks for data pool

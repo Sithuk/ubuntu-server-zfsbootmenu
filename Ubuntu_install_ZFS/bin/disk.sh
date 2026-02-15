@@ -98,18 +98,7 @@ partitionsFunc() {
         ;;
     esac
     
-    if [ -n "$zfs_root_password" ]; then
-        case "$zfs_root_encrypt" in
-            native) root_hex_code="BF00" ;;
-            luks)   root_hex_code="FD00" ;;
-            *)
-                echo "zfs_root_encrypt variable not recognised."
-                exit 1
-            ;;
-        esac
-    else
-        root_hex_code="BF00"
-    fi
+    root_hex_code="BF00"
     
     while IFS= read -r diskidnum; do
         echo "Creating partitions on disk ${diskidnum}."

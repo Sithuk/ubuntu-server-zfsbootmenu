@@ -14,14 +14,6 @@ environment_check() {
         echo "Boot environment check failed. EFI boot environment not found. Script requires EFI."
         exit 1
     fi
-
-    ## Check encryption defined if password defined
-    if [ -n "$zfs_root_password" ]; then
-        if [ -z "$zfs_root_encrypt" ]; then
-            echo "Password entered but no encryption method defined. Please define the zfs_root_encrypt variable."
-            exit 1
-        fi
-    fi
 }
 
 live_desktop_check() {
