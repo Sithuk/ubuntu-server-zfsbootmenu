@@ -1,0 +1,8 @@
+# Enforce LF line endings for all shell scripts and binaries
+*.sh text eol=lf
+install.sh text eol=lf
+csfl text eol=lf
+bin/csfl-* text eol=lf
+
+# Default behavior for other files
+* text=auto

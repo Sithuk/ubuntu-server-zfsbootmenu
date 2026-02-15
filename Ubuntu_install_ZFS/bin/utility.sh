@@ -1,0 +1,77 @@
+#!/bin/bash
+
+logFunc() {
+    # Log everything we do
+    exec > >(tee -a "$log_loc/$install_log") 2>&1
+}
+
+connectivity_check() {
+    ## https://unix.stackexchange.com/a/190610
+    test_site=google.com
+    if nc -zw1 "${test_site}" 443; then
+        echo "Internet connectivity test passed."
+    else
+        echo "No internet connectivity available. Please check connectivity."
+        exit 1
+    fi
+}
+
+logcopy() {
+    ## Copy install log to new installation.
+    if [ -d "$mountpoint" ]; then
+        cp "$log_loc/$install_log" "$mountpoint$log_loc"
+        echo "Log file copied into new installation at ${log_loc}."
+    else
+        echo "No mountpoint dir present. Install log not copied."
+    fi
+}
+
+script_copy() {
+    ## Copy project to new installation
+    # Instead of just copying the script, we copy the entire refactored folder
+    # PROJECT_ROOT should be defined in install.sh
+    cp -r "$PROJECT_ROOT" "$mountpoint/home/$user/Ubuntu_install_ZFS"
+    
+    chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+		chown -R "$user":"$user" "/home/$user/Ubuntu_install_ZFS"
+		chmod +x "/home/$user/Ubuntu_install_ZFS/install.sh"
+EOCHROOT
+
+    if [ -d "$mountpoint/home/$user/Ubuntu_install_ZFS" ]; then
+        echo "Install project copied to $user home directory in new installation."
+    else
+        echo "Error copying install project to new installation."
+    fi
+}
+
+logcompress() {
+    chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
+		## Disable log compression
+		for file in /etc/logrotate.d/* ; do
+			if grep -Eq "(^|[^#y])compress" "\$file" ; then
+				sed -i -r "s/(^|[^#y])(compress)/\1#\2/" "\$file"
+			fi
+		done
+EOCHROOT
+}
+
+update_date_time() {
+    ## Update time to correct out of date virtualbox clock
+    timedatectl
+    
+    sync_ntp() {
+        if systemctl is-active --quiet systemd-timesyncd; then
+            systemctl restart systemd-timesyncd.service
+        elif systemctl is-active --quiet chrony; then
+            chronyc burst 4/4
+            sleep 5
+            chronyc makestep
+        fi
+    }
+    sync_ntp
+    
+    timedatectl set-ntp false
+    timedatectl set-ntp true
+    sleep 10
+    timedatectl
+}
