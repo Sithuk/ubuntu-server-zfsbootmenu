@@ -34,8 +34,12 @@ Boot your system with an Ubuntu Live Desktop ISO. Open a terminal and clone the 
 
 ```bash
 git clone https://github.com/Sithuk/ubuntu-server-zfsbootmenu.git ~/ubuntu-zfs-install
+```
+```bash
 cd ~/ubuntu-zfs-install/Ubuntu_install_ZFS
-chmod +x install.sh
+```
+```bash
+chmod -R +x install.sh ./bin/
 ```
 
 ### 2. Configuration
@@ -60,13 +64,15 @@ After the initial installation completes, reboot into your new ZFS system and lo
 ```
 
 ### Optional Actions
-- **Create Data Pool**: To set up an additional ZFS pool on secondary drives:
+- **Install into Existing ZFS Pool**:
   ```bash
-  ./install.sh datapool
+  sudo ./install.sh osinstall
   ```
+  This command interactively allows you to select an imported ZFS pool and name a new Ubuntu installation to be created within it. It skips disk formatting and partitioning.
+
 - **Re-install ZFSBootMenu**:
   ```bash
-  ./install.sh reinstall-zbm
+  sudo ./install.sh reinstall-zbm
   ```
 
 ## FAQ & Snapshot Management

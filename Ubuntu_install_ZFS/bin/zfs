@@ -5,6 +5,59 @@ identify_ubuntu_dataset_uuid() {
     rootzfs_full_name="$(zfs list -o name | awk '/ROOT\/ubuntu/{print $1;exit}'|sed -e 's,^.*/,,')"
 }
 
+get_existing_pool_info() {
+    # List imported pools
+    echo "Scanning for imported ZFS pools..."
+    pools_list=$(zpool list -H -o name)
+    
+    if [ -z "$pools_list" ]; then
+        echo "No imported ZFS pools found. Please import your pool first."
+        exit 1
+    fi
+    
+    user_action_banner "Select the existing ZFS pool to install into."
+    nl_pool_list=$(echo "$pools_list" | nl)
+    echo "$nl_pool_list"
+    
+    count=$(echo "$pools_list" | wc -l)
+    n=""
+    while true; do
+        read -r -p 'Select option: ' n
+        if [ -n "$n" ] && [ "$n" -eq "$n" ] 2>/dev/null && [ "$n" -gt 0 ] && [ "$n" -le "$count" ]; then
+            break
+        fi
+    done
+    
+    RPOOL=$(echo "$pools_list" | sed -n "${n}p")
+    echo "Selected pool: $RPOOL"
+    
+    # Check for ROOT dataset
+    if ! zfs list "$RPOOL/ROOT" >/dev/null 2>&1; then
+        echo "Warning: $RPOOL/ROOT dataset not found. Created it."
+        zfs create -o canmount=off -o mountpoint=none "$RPOOL/ROOT"
+    fi
+    
+    user_action_banner "Enter a name for the new installation (dataset suffix).\nExample: ubuntu-24.04-custom"
+    read -r -p 'Install Name: ' new_install_name
+    
+    # Sanitize input
+    new_install_name=$(echo "$new_install_name" | tr -cd '[:alnum:]._-')
+    
+    if [ -z "$new_install_name" ]; then
+        echo "Invalid name. Using default timestamp."
+        rootzfs_full_name="ubuntu.$(date +%Y.%m.%d)"
+    else
+        rootzfs_full_name="$new_install_name"
+    fi
+    
+    if zfs list "$RPOOL/ROOT/$rootzfs_full_name" >/dev/null 2>&1; then
+        echo "Error: Dataset $RPOOL/ROOT/$rootzfs_full_name already exists!"
+        exit 1
+    fi
+    
+    echo "New installation will be at: $RPOOL/ROOT/$rootzfs_full_name"
+}
+
 create_zpool_Func() {
     ## Create zfs pool
     pool=$1 ## root, data
@@ -77,9 +130,16 @@ debootstrap_createzfspools_Func() {
 
 mountpointsFunc() {
     # Create filesystem datasets
-    zfs create -o canmount=off -o mountpoint=none "$RPOOL/ROOT" 
+    # Only create ROOT if it doesn't already exist (handled in get_existing_pool_info for interactive mode)
+    if [ -z "${OS_INSTALL_MODE:-}" ]; then
+        zfs create -o canmount=off -o mountpoint=none "$RPOOL/ROOT"
+        rootzfs_full_name="ubuntu.$(date +%Y.%m.%d)"
+    else
+        # In OS_INSTALL_MODE, RPOOL and rootzfs_full_name are set by get_existing_pool_info
+        # Need to ensure mountpoint is set correctly on the pool for the install session
+        zpool set altroot="$mountpoint" "$RPOOL"
+    fi
                 
-    rootzfs_full_name="ubuntu.$(date +%Y.%m.%d)"
     zfs create -o canmount=noauto -o mountpoint=/ "$RPOOL/ROOT/$rootzfs_full_name"
     zfs mount "$RPOOL/ROOT/$rootzfs_full_name"
     zpool set bootfs="$RPOOL/ROOT/$rootzfs_full_name" "$RPOOL"

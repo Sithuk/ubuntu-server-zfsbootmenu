@@ -27,11 +27,14 @@ debootstrap_part1_Func() {
         systemctl stop zfs-zed
     fi
 
-    clear_partition_table "root"
-    partprobe
-    sleep 2
-
-    partitionsFunc
+    if [ -z "${OS_INSTALL_MODE:-}" ]; then
+        clear_partition_table "root"
+        partprobe
+        sleep 2
+        partitionsFunc
+    else
+        echo "Skipping partition clearing and creation in existing install mode."
+    fi
 }
 
 debootstrap_installminsys_Func() {
@@ -161,8 +164,12 @@ systemsetupFunc_part3() {
             esp_mount="/boot/efi$loop_counter"
             echo "$esp_mount" >> "$mountpoint/tmp/backup_esp_mounts.txt"
         fi
-        umount -q "/dev/disk/by-id/${diskidnum}-part1" || true
-        mkdosfs -F 32 -s 1 -n EFI "/dev/disk/by-id/${diskidnum}-part1"
+        if [ -z "${OS_INSTALL_MODE:-}" ]; then
+             umount -q "/dev/disk/by-id/${diskidnum}-part1" || true
+             mkdosfs -F 32 -s 1 -n EFI "/dev/disk/by-id/${diskidnum}-part1"
+        else
+             echo "Skipping EFI formatting in existing install mode."
+        fi
         partprobe && sleep 2
         blkid_part1="$(blkid -s UUID -o value "/dev/disk/by-id/${diskidnum}-part1")"
         chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
@@ -183,7 +190,11 @@ EOCHROOT
 
     ## Format and Mount unmanaged ext4 partition
     while IFS= read -r diskidnum; do
-        mkfs.ext4 -F "/dev/disk/by-id/${diskidnum}-part3"
+        if [ -z "${OS_INSTALL_MODE:-}" ]; then
+             mkfs.ext4 -F "/dev/disk/by-id/${diskidnum}-part3"
+        else
+             echo "Skipping ext4 data partition formatting in existing install mode."
+        fi
         blkid_part3="$(blkid -s UUID -o value "/dev/disk/by-id/${diskidnum}-part3")"
         chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 			mkdir -p "${ext4_data_mount}"

@@ -183,3 +183,83 @@ partitionsFunc() {
     partprobe
     sleep 2
 }
+identify_existing_esp() {
+    echo "Identifying disks and ESPs for pool $RPOOL..."
+    true > /tmp/diskid_check_root.txt
+
+    # Parse zpool status to find devices
+    # We use -P to get full paths, -L might resolve links but we want persistent IDs if possible
+    # Actually, zpool list -v -P -H is good.
+    
+   zpool list -v -P -H "$RPOOL" | awk '/^\t\/dev\//{print $1}' | while read -r device_path; do
+        # Remove partition suffix if present (standard formats: -partX, pX for nvme, or just number for sdX)
+        # We assume the input is a partition because root pools usually use partitions.
+        
+        parent_disk=""
+        
+        # Check if it's a by-id path
+        if [[ "$device_path" == *"/by-id/"* ]]; then
+             # Remove -part* suffix
+             parent_disk="${device_path%-part*}"
+             
+             # Handle NVMe style if by-id naming includes it (rare for by-id, usually wwn-...)
+             # but check just in case it didn't match -part*
+             if [[ "$parent_disk" == "$device_path" ]]; then
+                 # Try removing p[0-9]+ suffix?
+                  parent_disk="${device_path%p[0-9]*}"
+             fi
+             
+        else
+            # maps to /dev/sdX or /dev/nvme0n1pX
+            # resolve to by-id
+            # This is complex, so let's try to map the partition to a disk by-id
+            
+            # Get the disk name (e.g. sda, nvme0n1)
+            # lsblk -no pkname $device_path
+            disk_name=$(lsblk -no pkname "$device_path" | head -n1)
+            
+            if [ -n "$disk_name" ]; then
+                # Find a by-id link for this disk
+                # Prefer ata-* or scsi-* over wwn-* for readability, but wwn is fine.
+                by_id_path=$(find /dev/disk/by-id -lname "*/$disk_name" | grep -v "wwn-" | grep -v "part" | head -n1)
+                
+                if [ -z "$by_id_path" ]; then
+                     # If no non-wwn, take any
+                     by_id_path=$(find /dev/disk/by-id -lname "*/$disk_name" | grep -v "part" | head -n1)
+                fi
+                
+                if [ -n "$by_id_path" ]; then
+                    parent_disk="$by_id_path"
+                fi
+            fi
+        fi
+        
+        if [ -n "$parent_disk" ]; then
+            disk_id=$(basename "$parent_disk")
+            echo "Found disk ID: $disk_id"
+            echo "$disk_id" >> /tmp/diskid_check_root.txt
+        else
+            echo "Warning: Could not determine parent disk for $device_path"
+        fi
+    done
+    
+    if [ ! -s /tmp/diskid_check_root.txt ]; then
+         # Fallback: try parsing `zpool status` if `zpool list` failed or gave unexpected output
+         echo "Attempting fallback disk detection..."
+         zpool status -P "$RPOOL" | grep "ONLINE" | grep "/dev/" | awk '{print $1}' | while read -r device_path; do
+             # Same logic... simplified
+             disk_name=$(lsblk -no pkname "$device_path" | head -n1)
+             if [ -n "$disk_name" ]; then
+                by_id_path=$(find /dev/disk/by-id -lname "*/$disk_name" | grep -v "wwn-" | grep -v "part" | head -n1)
+                if [ -n "$by_id_path" ]; then
+                    echo "$(basename "$by_id_path")" >> /tmp/diskid_check_root.txt
+                fi
+             fi
+         done
+    fi
+
+    if [ ! -s /tmp/diskid_check_root.txt ]; then
+        echo "Error: Could not identify underlying disks for pool $RPOOL!"
+        exit 1
+    fi
+}
