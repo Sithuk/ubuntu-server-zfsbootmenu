@@ -136,22 +136,37 @@ partitionsFunc() {
         
         add_part() {
             local name="$1"
-            local size="$2"
+            local size_raw="$2"
             local type="$3"
+            local size_mib
             local end
             
-            if [ "$size" = "0" ] || [ "$size" = "max" ]; then
+            if [ "$size_raw" = "0" ] || [ "$size_raw" = "max" ]; then
                 end="100%"
             else
-                end="$((CURRENT + size))"
+                # Parse suffix and convert to MiB
+                if [[ "$size_raw" =~ ^([0-9]+)([GgMmTt])$ ]]; then
+                    local val="${BASH_REMATCH[1]}"
+                    local unit="${BASH_REMATCH[2]}"
+                    case "${unit,,}" in
+                        g) size_mib=$((val * 1024)) ;;
+                        t) size_mib=$((val * 1024 * 1024)) ;;
+                        m) size_mib=$val ;;
+                    esac
+                elif [[ "$size_raw" =~ ^[0-9]+$ ]]; then
+                    size_mib="$size_raw"
+                else
+                    echo "Error: Invalid partition size format: $size_raw"
+                    exit 1
+                fi
+                end="$((CURRENT + size_mib))MiB"
             fi
             
-            echo "Adding partition: $name ($CURRENT MiB to $end MiB)"
-            if [ "$end" = "100%" ]; then
-                parted -s "$DRIVE" mkpart "$name" "${CURRENT}MiB" 100%
-            else
-                parted -s "$DRIVE" mkpart "$name" "${CURRENT}MiB" "${end}MiB"
-                CURRENT=$end
+            echo "Adding partition: $name ($CURRENT MiB to $end)"
+            parted -s "$DRIVE" mkpart "$name" "${CURRENT}MiB" "$end"
+            
+            if [ "$end" != "100%" ]; then
+                CURRENT=$((CURRENT + size_mib))
             fi
         }
 
