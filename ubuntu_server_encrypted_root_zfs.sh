@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2026-02-07
+##Script date: 2026-03-28
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -38,7 +38,7 @@ set -euo pipefail
 ##zfs mount -a #Mount all datasets.
 
 ##Variables:
-ubuntuver="noble" #Ubuntu release to install. "jammy" (22.04). "noble" (24.04). "questing" (25.10).
+ubuntuver="noble" #Ubuntu release to install. "noble" (24.04). resolute (26.04).
 distro_variant="server" #Ubuntu variant to install. "server" (Ubuntu server; cli only.) "desktop" (Default Ubuntu desktop install). "kubuntu" (KDE plasma desktop variant). "xubuntu" (Xfce desktop variant). "budgie" (Budgie desktop variant). "MATE" (MATE desktop variant).
 user="testuser" #Username for new install.
 PASSWORD="testuser" #Password for user in new install.
@@ -139,6 +139,46 @@ live_desktop_check(){
 		exit 1
 	fi
 
+}
+
+update_date_time(){
+	##Update time to correct out of date virtualbox clock when using snapshots for testing.
+	timedatectl
+
+	manual_set(){
+		timedatectl set-ntp off
+		sleep 1
+		timedatectl set-time "2021-01-01 00:00:00"
+	}
+	#manual_set
+
+	sync_ntp(){
+
+		if systemctl is-active systemd-timesyncd
+		then
+			systemctl restart systemd-timesyncd.service
+			systemctl status systemd-timesyncd.service
+		else
+			if systemctl is-active chrony
+			then
+				chronyc burst 4/4 #Requests up to 4 good measurements (and up to 4 total attempts) from all configured sources.
+				sleep 5 ##Allow time for burst to complete.
+				chronyc makestep #Update the system clock.
+				
+				##Check status
+				chronyc tracking
+				chronyc sources
+			else true
+			fi
+		fi
+
+	}
+	sync_ntp
+	
+	timedatectl set-ntp false
+	timedatectl set-ntp true
+	sleep 10
+	timedatectl
 }
 
 keyboard_console_settings(){
@@ -2213,12 +2253,14 @@ setupremoteaccess(){
 	then echo "Remote access already appears to be installed owing to the presence of /etc/zfsbootmenu/dracut.conf.d/dropbear.conf. Install cancelled."
 	else 
 		disclaimer
+		update_date_time
 		remote_zbm_access_Func "base"
 	fi
 }
 
 createdatapool(){
 	disclaimer
+	update_date_time
 		
 	##Check on whether data pool already exists
 	if [ "$(zpool status "$datapool")" ];
@@ -2333,6 +2375,7 @@ reinstall-zbm(){
 		case "${reinstall_selection-default}" in
 		Y|y)
 			echo "Re-installing zfsbootmenu."
+			update_date_time
 			zfsbootmenu_install_config_Func "base"
 		;;
 		*)
@@ -2378,46 +2421,6 @@ reinstall-pyznap(){
 ##--------
 logFunc
 date
-update_date_time(){
-	##Update time to correct out of date virtualbox clock when using snapshots for testing.
-	timedatectl
-
-	manual_set(){
-		timedatectl set-ntp off
-		sleep 1
-		timedatectl set-time "2021-01-01 00:00:00"
-	}
-	#manual_set
-
-	sync_ntp(){
-
-		if systemctl is-active systemd-timesyncd
-		then
-			systemctl restart systemd-timesyncd.service
-			systemctl status systemd-timesyncd.service
-		else
-			if systemctl is-active chrony
-			then
-				chronyc burst 4/4 #Requests up to 4 good measurements (and up to 4 total attempts) from all configured sources.
-				sleep 5 ##Allow time for burst to complete.
-				chronyc makestep #Update the system clock.
-				
-				##Check status
-				chronyc tracking
-				chronyc sources
-			else true
-			fi
-		fi
-
-	}
-	sync_ntp
-	
-	timedatectl set-ntp false
-	timedatectl set-ntp true
-	sleep 10
-	timedatectl
-}
-update_date_time
 
 initialinstall(){
 	
@@ -2426,7 +2429,8 @@ initialinstall(){
 	connectivity_check #Check for internet connectivity.
 	getdiskID_pool "root"
 	ipv6_apt_live_iso_fix #Only active if ipv6_apt_fix_live_iso variable is set to "yes".
-
+	update_date_time
+	
 	debootstrap_part1_Func
 	debootstrap_createzfspools_Func
 	debootstrap_installminsys_Func
@@ -2457,6 +2461,7 @@ initialinstall(){
 postreboot(){
 	disclaimer
 	connectivity_check #Check for internet connectivity.
+	update_date_time
 	
 	distroinstall #Upgrade the minimal system to the selected distro.
 	NetworkManager_config #Adjust networking config for NetworkManager, if installed by distro.
