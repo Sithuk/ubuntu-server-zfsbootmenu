@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2026-03-28
+##Script date: 2026-04-03
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -80,6 +80,7 @@ remoteaccess_ip="192.168.0.222" #Remote access static IP address to connect to Z
 remoteaccess_netmask="255.255.255.0" #Remote access subnet mask. Not used for "dhcp" automatic IP configuration.
 ubuntu_original="http://archive.ubuntu.com/ubuntu" #Default ubuntu repository.
 install_warning_level="PRIORITY=critical" #"PRIORITY=critical", or "FRONTEND=noninteractive". Pause install to show critical messages only or do not pause (noninteractive). Script still pauses for keyboard selection.
+zbm_version="master" ##"master" for zfsbootmenu master branch. "release" for latest release.
 extra_programs="no" #"yes", or "no". Install additional programs if not included in the ubuntu distro package. Programs: cifs-utils, locate, man-db, openssh-server, tldr.
 
 ##Check for root priviliges
@@ -1086,10 +1087,8 @@ zfsbootmenu_install_config_Func(){
 			cd /usr/local/src/zfsbootmenu
 
 			##Download zfsbootmenu
-			zbm_release="git" ##"git" for git master. "release" for latest release.
-
-			case "\${zbm_release}" in
-			git)
+			case "${zbm_version}" in
+			master)
 
 				##Download the latest zfsbootmenu git master
 				git clone https://github.com/zbm-dev/zfsbootmenu .
@@ -1989,54 +1988,6 @@ NetworkManager_config(){
 	
 }
 
-pyznapinstall(){
-	##snapshot management
-	
-	##https://github.com/yboetz/pyznap
-	apt install -y python3-pip
-	pip3 --version
-	##https://docs.python-guide.org/dev/virtualenvs/
-	apt install -y python3-virtualenv
-	virtualenv --version
-	apt install -y python3-virtualenvwrapper
-	mkdir /opt/pyznap
-	cd /opt/pyznap
-	virtualenv venv
-	source venv/bin/activate ##enter virtual env
-		pip install setuptools ##Setuptools not present in virtual environments created with venv. Need to install it.
-		pip install pyznap
-	deactivate ##exit virtual env
-	ln -s /opt/pyznap/venv/bin/pyznap /usr/local/bin/pyznap
-	/opt/pyznap/venv/bin/pyznap setup ##config file created /etc/pyznap/pyznap.conf
-	chown root:root -R /etc/pyznap/
-	##update config
-	cat >> /etc/pyznap/pyznap.conf <<-EOF
-		[$RPOOL/ROOT]
-		frequent = 4
-		hourly = 24
-		daily = 7
-		weekly = 4
-		monthly = 6
-		yearly = 1
-		snap = yes
-		clean = yes
-	EOF
-
-	cat > /etc/cron.d/pyznap <<-EOF
-		SHELL=/bin/sh
-		PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-		*/15 * * * *   root    /opt/pyznap/venv/bin/pyznap snap >> /var/log/pyznap.log 2>&1
-	EOF
-
-	##integrate with apt
-	cat > /etc/apt/apt.conf.d/80-zfs-snapshot <<-EOF
-		DPkg::Pre-Invoke {"if [ -x /usr/local/bin/pyznap ]; then /usr/local/bin/pyznap snap; fi"};
-	EOF
-
-	pyznap snap ##Take ZFS snapshots and perform cleanup as per config file.
-
-}
-
 sanoid_install(){
 	##snapshot and replication management
 	##https://github.com/jimsalterjrs/sanoid
@@ -2339,7 +2290,7 @@ createdatapool(){
 
 reinstall-zbm(){
 	
-	isolate_generate_zbm_version(){
+	isolate_generate_zbm_ver(){
 		##generate-zbm quits after printing version number. Isolate in a function to allow script to continue.
 		set +e
 		generate-zbm --showver > /tmp/zfs_installed_version.txt || echo "No version number reported by generate-zbm --showver." > /tmp/zfs_installed_version.txt
@@ -2364,7 +2315,7 @@ reinstall-zbm(){
 	zbm_github_latest_version="$(curl -s https://api.github.com/repos/zbm-dev/zfsbootmenu/releases/latest | grep tag_name | cut -d : -f 2,3 | tr -d \"|sed 's/^[ \t]*//'|sed 's/,//'|sed 's,^v,,')"
 	printf '%s%s\n' "Latest zfsbootmenu github release version: " "${zbm_github_latest_version}" 
 	
-	isolate_generate_zbm_version
+	isolate_generate_zbm_ver
 	
 	zbm_installed_version="$(cat /tmp/zfs_installed_version.txt)"
 	printf '%s%s\n' "Installed zfsbootmenu version: " "${zbm_installed_version}" 
@@ -2386,36 +2337,6 @@ reinstall-zbm(){
 	else
 		zfsbootmenu_install_config_Func "base"
 	fi
-}
-
-reinstall-pyznap(){
-
-	if [ -f /etc/apt/apt.conf.d/80-zfs-snapshot ];
-	then
-		rm /etc/apt/apt.conf.d/80-zfs-snapshot
-	else true
-	fi
-
-	if [ -f /usr/local/bin/pyznap ];
-	then
-		rm /usr/local/bin/pyznap
-	else true
-	fi
-
-	if [ -d /opt/pyznap ];
-	then
-		rm -rf /opt/pyznap
-	else true
-	fi
-
-	if [ -f /etc/pyznap/pyznap.conf ];
-	then
-		rm /etc/pyznap/pyznap.conf
-	else true
-	fi
-
-	pyznapinstall
-
 }
 
 ##--------
@@ -2465,7 +2386,6 @@ postreboot(){
 	
 	distroinstall #Upgrade the minimal system to the selected distro.
 	NetworkManager_config #Adjust networking config for NetworkManager, if installed by distro.
-	#pyznapinstall #Snapshot management.
 	sanoid_install #Snapshot and replication management.
 	extra_programs #Install extra programs.
 	reinstate_apt "base" #Reinstate non-mirror package sources in new install.
@@ -2500,13 +2420,8 @@ case "${1-default}" in
 		read -r _
 		reinstall-zbm
 	;;
-	reinstall-pyznap)
-		echo "Re-installing pyznap. Press Enter to Continue or CTRL+C to abort."
-		read -r
-		reinstall-pyznap
-	;;
 	*)
-		printf "%s\n%s\n%s\n" "-----" "Usage: $0 initial | postreboot | remoteaccess | datapool | reinstall-zbm | reinstall-pyznap" "-----"
+		printf "%s\n%s\n%s\n" "-----" "Usage: $0 initial | postreboot | remoteaccess | datapool | reinstall-zbm" "-----"
 	;;
 esac
 
