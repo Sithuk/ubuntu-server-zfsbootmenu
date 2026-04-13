@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2026-04-03
+##Script date: 2026-04-13
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -2000,7 +2000,7 @@ sanoid_install(){
 	mkdir -p /etc/sanoid
 	cat > /etc/sanoid/sanoid.conf <<-EOF
 		[$RPOOL/ROOT]
-			use_template = template_production
+			use_template = production
 			recursive = yes
 			process_children_only = yes #Do not snapshot the parent dataset $RPOOL/ROOT. The OS root dataset is a child dataset of $RPOOL/ROOT.
 			
