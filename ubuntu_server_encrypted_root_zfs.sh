@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2026-04-13
+##Script date: 2026-04-14
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -1714,6 +1714,8 @@ systemsetupFunc_part5(){
 			mdadm --create /dev/md0 --metadata=1.2 \\
 			--level="$mdadm_level" \\
 			--raid-devices="$mdadm_devices" \\
+			--bitmap=none \\
+			--verbose \\
 		EOF
 	
 		##Add swap disks.
@@ -1743,7 +1745,7 @@ systemsetupFunc_part5(){
 
 		##Update mdadm configuration file
 		cat >> "$mdadm_swap_loc" <<-EOF
-			mdadm --detail --scan --verbose | tee -a /etc/mdadm/mdadm.conf
+			mdadm --detail --scan --prefer=by-id --verbose | tee -a /etc/mdadm/mdadm.conf
 		EOF
 
 		##Check MDADM status.
@@ -1836,9 +1838,13 @@ systemsetupFunc_part5(){
 	esac
 	
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
-		##Mount a tmpfs to /tmp
-		cp /usr/share/systemd/tmp.mount /etc/systemd/system/
-		systemctl enable tmp.mount
+		##Mount a tmpfs to /tmp. Not needed for 26.04 as /tmp is a tmpfs by default.
+		if [ -f /usr/share/systemd/tmp.mount ];
+		then
+			cp /usr/share/systemd/tmp.mount /etc/systemd/system/
+			systemctl enable tmp.mount
+		else true
+		fi
 
 		##Setup system groups
 		addgroup --system lpadmin
