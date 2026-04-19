@@ -5,7 +5,7 @@ This script creates an Ubuntu installation using the ZFS filesystem. The install
 Snapshots allow you to rollback your system to a previous state if there is a problem. The system automatically creates snapshots on a timer and also when the system is updated with apt. Snapshots are pruned over time to keep fewer older snapshots.
 
 Supports:
-- Ubuntu 22.04, 24.04.
+- Ubuntu 24.04, 26.04.
 - Root filesystem on ZFS.
 - Choose from: Ubuntu Server, Ubuntu Desktop, Kubuntu, Xubuntu, Budgie, and Ubuntu MATE.
 - Single, mirror, raid0, raidz1, raidz2, and raidz3 topologies.
@@ -72,12 +72,9 @@ Additional guidance and notes can be found in the script.
      - From the main menu, select the boot environment you want to destroy. Press CTRL+W to re-import the pool as read/write, then CTRL+R to enter the recovery shell. You can then use "zfs destroy" as in the point above. Press CTRL+D to exit the shell and return to the menu when done.
 
 3. Can I upgrade the system normally using do-release-upgrade?
-   - Zfsbootmenu
-   
-     It is possible that upgrading ubuntu will cause a newer zfs version to be installed that is unsupported by zfsbootmenu. The system may not be able to boot if the zfs root pool is upgraded beyond what is supported by zfsbootmenu. Create a test system in a virtual machine first to duplicate your setup and test the upgrade process.
-   - Pyznap
-   
-     A previous version of the script installed pyznap for snapshot management. Pyznap is not included as a package in the ubuntu repos at present. It may need to be re-compiled and re-installed. You can reference the install script for the relevant code to re-compile and re-install. 
+
+	It is possible that upgrading ubuntu will cause a newer zfs version to be installed that is unsupported by zfsbootmenu. The system may not be able to boot if the zfs root pool is upgraded beyond what is supported by zfsbootmenu. Create a test system in a virtual machine first to duplicate your setup and test the upgrade process.
+
 
 4. How do I change the password on a natively encrypted zfs root pool?
 
