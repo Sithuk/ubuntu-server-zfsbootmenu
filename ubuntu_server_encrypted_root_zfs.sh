@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2026-04-14
+##Script date: 2026-04-19
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -13,23 +13,14 @@ set -euo pipefail
 ##Script to be run in two parts.
 ##Part 1: Run with "initial" option from Ubuntu live iso (desktop version) terminal.
 ##Part 2: Reboot into new install.
-##Part 2: Run with "postreboot" option after first boot into new install (login as user/password defined in variable section below). 
+##Part 2: Run with "postreboot" option after first boot into new install (login as user/password defined in variable section below).
 
-##Remote access can be installed by either:
-##  setting the remoteaccess variable to "yes" in the variables section below, or
-##  running the script with the "remoteaccess" option after part 1 and part 2 are run.
+##Remote access can be installed by running the script with the "remoteaccess" option after "initial" and "postreboot" are run.
 ##Connect as "root" on port 222 to the server's ip address.
-##It's better to leave the remoteaccess variable below as "no" and run the script with the "remoteaccess" option
-##  as that will use the user's authorized_keys file. Setting the remoteaccess variable to "yes" will use root's authorized_keys.
 ##Login as "root" during remote access, even if using a user's authorized_keys file. No other users are available during remote access.
 
 ##A non-root drive can be setup as an encrypted data pool using the "datapool" option.
 ##The drive will be unlocked automatically after the root drive password is entered at boot.
-
-##If running in a Virtualbox virtualmachine, setup tips below:
-##1. Enable EFI.
-##2. Set networking to bridged mode so VM gets its own IP. Fewer problems with ubuntu keyserver.
-##3. Minimum drive size of 5GB.
 
 ##Rescuing using a Live CD
 ##zpool export -a #Export all pools.
@@ -65,7 +56,6 @@ datapoolmount="/mnt/$datapool" #Non-root drive data pool mount point in new inst
 zfs_dpool_ashift="12" #See notes for rpool ashift. If ashift is set too low, a significant read/write penalty is incurred. Virtually no penalty if set higher.
 zfs_compression="zstd" #"lz4" is the zfs default; "zstd" may offer better compression at a cost of higher cpu usage.
 mountpoint="/mnt/ub_server" #Mountpoint in live iso.
-remoteaccess_first_boot="no" #"yes" to enable remoteaccess during first boot. Recommend leaving as "no" and run script with "remoteaccess". See notes in section above.
 timeout_rEFInd="3" #Timeout in seconds for rEFInd boot screen until default choice selected.
 timeout_zbm_no_remote_access="3" #Timeout in seconds for zfsbootmenu when no remote access enabled.
 timeout_zbm_remote_access="45" #Timeout in seconds for zfsbootmenu when remote access enabled. The password prompt for an encrypted root pool with allow an indefinite time to connect. An unencrypted root pool will boot the system when the timer runs out, preventing remote access.
@@ -1082,7 +1072,7 @@ zfsbootmenu_install_config_Func(){
 				cpio
 
 			apt-get install --yes curl
-			
+
 			mkdir -p /usr/local/src/zfsbootmenu
 			cd /usr/local/src/zfsbootmenu
 
@@ -1131,9 +1121,9 @@ zfsbootmenu_install_config_Func(){
 
 		##configure zfsbootmenu
 		config_zbm(){
-			
+
 			kb_layoutcode="\$(debconf-get-selections | grep keyboard-configuration/layoutcode | awk '{print \$4}')"
-			
+
 			##https://github.com/zbm-dev/zfsbootmenu/blob/master/testing/helpers/configure-ubuntu.sh
 			##Update configuration file
 			sed \\
@@ -1146,33 +1136,33 @@ zfsbootmenu_install_config_Func(){
 			if [ "$quiet_boot" = "no" ]; then
 				sed -i 's,ro quiet,ro,' /etc/zfsbootmenu/config.yaml
 			fi
-			
+
 			if [ -n "$zfs_root_password" ];
 			then
 				case "$zfs_root_encrypt" in
 					luks)
 						##https://github.com/agorgl/zbm-luks-unlock
 						zfsbootmenu_hook_root=/etc/zfsbootmenu/hooks ##https://docs.zfsbootmenu.org/en/v2.3.x/man/zfsbootmenu.7.html
-						
+
 						mkdir -p \${zfsbootmenu_hook_root}/early-setup.d
 						cd \${zfsbootmenu_hook_root}/early-setup.d
 						curl -L -O https://raw.githubusercontent.com/agorgl/zbm-luks-unlock/master/hooks/early-setup.d/luks-unlock.sh
 						chmod +x \${zfsbootmenu_hook_root}/early-setup.d/luks-unlock.sh
-						
+
 						#mkdir -p \${zfsbootmenu_hook_root}/boot-sel.d
 						#cd \${zfsbootmenu_hook_root}/boot-sel.d
 						#curl -L -O https://raw.githubusercontent.com/agorgl/zbm-luks-unlock/master/hooks/boot-sel.d/initramfs-inject.sh
 						#chmod +x \${zfsbootmenu_hook_root}/early-setup.d/initramfs-inject.sh
-						
+
 						cd /etc/zfsbootmenu/dracut.conf.d/
 						curl -L -O https://raw.githubusercontent.com/agorgl/zbm-luks-unlock/master/dracut.conf.d/99-crypt.conf
 					;;
 				esac
 			else
 				true
-			fi	
-			
-			
+			fi
+
+
 		}
 		config_zbm
 
@@ -1193,6 +1183,98 @@ zfsbootmenu_install_config_Func(){
 		exit 1
 	;;
 	esac
+
+}
+
+zfsbootmenu_install_config_container_Func(){
+	##Podman cannot be run properly in a chroot environment.
+	zfsbootmenu_install_config_loc="/tmp/zfsbootmenu_install_config.sh"
+	zbmbuilddir="$mountpoint"/etc/zfsbootmenu
+	cat <<-EOH >"${zfsbootmenu_install_config_loc}"
+		##https://github.com/zbm-dev/zfsbootmenu/blob/v3.1.0/releng/docker/README.md
+		##https://discourse.practicalzfs.com/t/how-to-enable-remote-access-ssh-to-zfsbootmenu/1498/9
+
+		apt-get install -y podman
+		apt-get install -y curl
+
+		mkdir -p "$zbmbuilddir"
+		curl -L -o "$zbmbuilddir"/config.yaml https://raw.githubusercontent.com/zbm-dev/zfsbootmenu/master/etc/zbm-builder/config.yaml
+
+		##configure zfsbootmenu
+		config_zbm(){
+
+			kb_layoutcode="\$(debconf-get-selections | grep keyboard-configuration/layoutcode | awk '{print \$4}')"
+
+			##Update configuration file
+			sed \\
+			-e "/CommandLine/s,ro,rd.vconsole.keymap=\${kb_layoutcode} ro," \\
+			-i "$zbmbuilddir"/config.yaml
+
+			if [ "$quiet_boot" = "no" ]; then
+				sed -i 's,ro quiet,ro,' "$zbmbuilddir"/config.yaml
+			fi
+
+			if [ -n "$zfs_root_password" ];
+			then
+				case "$zfs_root_encrypt" in
+					luks)
+						##https://github.com/agorgl/zbm-luks-unlock
+						zfsbootmenu_hook_root="$zbmbuilddir"/hooks ##https://docs.zfsbootmenu.org/en/v2.3.x/man/zfsbootmenu.7.html
+
+						mkdir -p \${zfsbootmenu_hook_root}/early-setup.d
+						cd \${zfsbootmenu_hook_root}/early-setup.d
+						curl -L -O https://raw.githubusercontent.com/agorgl/zbm-luks-unlock/master/hooks/early-setup.d/luks-unlock.sh
+						chmod +x \${zfsbootmenu_hook_root}/early-setup.d/luks-unlock.sh
+
+						mkdir -p "$zbmbuilddir"/dracut.conf.d/
+						cd "$zbmbuilddir"/dracut.conf.d/
+						curl -L -O https://raw.githubusercontent.com/agorgl/zbm-luks-unlock/master/dracut.conf.d/99-crypt.conf
+					;;
+				esac
+			else
+				true
+			fi
+
+		}
+		config_zbm
+
+		##Generate ZFSBootMenu images at output dir
+		cat >> "$zbmbuilddir"/zbm-builder.conf <<EOF
+			RUNTIME_ARGS+=( -v $mountpoint/boot/efi/EFI/ubuntu:/output )
+			BUILD_ARGS+=( -o /output )
+		EOF
+
+		##Enable host network stack in podman so network available when running in root.
+		echo "RUNTIME_ARGS+=( --net=host )" >> "$zbmbuilddir"/zbm-builder.conf
+
+		##https://github.com/zbm-dev/zfsbootmenu/blob/v3.1.0/zbm-builder.sh
+		curl -L -o "$zbmbuilddir"/zbm-builder.sh https://raw.githubusercontent.com/zbm-dev/zfsbootmenu/master/zbm-builder.sh
+		chmod 755 "$zbmbuilddir"/zbm-builder.sh
+		chmod +x "$zbmbuilddir"/zbm-builder.sh
+
+		##Live environment not large enough to decompress image. De-compress on disk.
+		##https://docs.podman.io/en/stable/markdown/podman.1.html
+		mkdir -p "$zbmbuilddir"/containers
+		mkdir -p "$zbmbuilddir"/run
+		cp "$zbmbuilddir"/zbm-builder.sh "$zbmbuilddir"/zbm-builder_sh.bak
+		sed -i 's,exec "\${PODMAN}",exec "\${PODMAN}" --root '"$zbmbuilddir"'/containers --runroot '"$zbmbuilddir"'/run,' "$zbmbuilddir"/zbm-builder.sh
+
+		mkdir -p "$mountpoint"/boot/efi/EFI/ubuntu/
+
+		/bin/bash "$zbmbuilddir"/zbm-builder.sh -b "$zbmbuilddir"
+
+	EOH
+
+	/bin/bash "${zfsbootmenu_install_config_loc}"
+
+	##Cleanup working directories
+	rm -rf "$zbmbuilddir"/containers
+	rm -rf "$zbmbuilddir"/run
+
+	##Remove mountpoint references for use in the new system.
+	sed -i 's,'"$mountpoint"',,g' "$zbmbuilddir"/zbm-builder.conf
+	#sed -i 's,'"$mountpoint"',,g' "$zbmbuilddir"/zbm-builder.sh
+	mv "$zbmbuilddir"/zbm-builder_sh.bak "$zbmbuilddir"/zbm-builder.sh
 
 }
 
@@ -1357,6 +1439,99 @@ remote_zbm_access_Func(){
 	;;
 	esac
 	
+}
+
+remote_zbm_access_container_Func(){
+
+	cat <<-EOH >/tmp/remote_zbm_access.sh
+		#!/bin/sh
+		##https://raw.githubusercontent.com/zbm-dev/zfsbootmenu/refs/heads/master/contrib/remote-ssh-build.sh
+
+		zbmbuilddir=/etc/zfsbootmenu
+
+		##Test for config file
+		if [ -f "\$zbmbuilddir"/config.yaml ];
+		then
+			echo "Zfsbootmenu container build config file found. Proceeding."
+		else
+			echo "Zfsbootmenu container build config file missing. Exiting."
+			exit 1
+		fi
+
+		setup_network(){
+			##Network settings for ssh access during boot.
+			mkdir -p "\$zbmbuilddir"/cmdline.d
+
+			remoteaccess_dhcp_ver(){
+				dhcpver="\$1"
+				echo "ip=\${dhcpver:-default} rd.neednet=1" > "\$zbmbuilddir"/cmdline.d/dracut-network.conf
+			}
+
+			##Dracut network options: https://github.com/dracutdevs/dracut/blob/master/modules.d/35network-legacy/ifup.sh
+			case "$remoteaccess_ip_config" in
+			dhcp | dhcp,dhcp6 | dhcp6)
+				remoteaccess_dhcp_ver "$remoteaccess_ip_config"
+			;;
+			static)
+				echo "ip=$remoteaccess_ip:::$remoteaccess_netmask:::none rd.neednet=1 rd.break" > "\$zbmbuilddir"/cmdline.d/dracut-network.conf
+			;;
+			*)
+				echo "Remote access IP option not recognised."
+				exit 1
+			;;
+			esac
+
+		}
+		setup_network
+
+		curl -L -o "\$zbmbuilddir"/remote-ssh-build.sh https://raw.githubusercontent.com/zbm-dev/zfsbootmenu/refs/heads/master/contrib/remote-ssh-build.sh
+		chmod +x "\$zbmbuilddir"/remote-ssh-build.sh
+
+		##Update locations so do not have to run from build dir.
+		#cp "\$zbmbuilddir"/remote-ssh-build.sh "\$zbmbuilddir"/remote-ssh-build_sh.bak
+		sed -i 's,^BUILD_DIR=.*,BUILD_DIR='"\$zbmbuilddir"',' "\$zbmbuilddir"/remote-ssh-build.sh
+		sed -i 's,^ZBM_BUILDER=.*,ZBM_BUILDER='"\$zbmbuilddir"'/zbm-builder.sh,' "\$zbmbuilddir"/remote-ssh-build.sh
+
+		##Force update from user's authorized_keys.
+		sed -i '/^RS_AUTH=/a if [ -f "\$RS_AUTH" ]; then rm "\$RS_AUTH"; else true; fi ##Delete dropbear key so new key is sourced from user authorized_keys file.' "\$zbmbuilddir"/remote-ssh-build.sh
+
+		##https://github.com/zbm-dev/zfsbootmenu/blob/v3.1.0/zbm-builder.sh
+		curl -L -o "\$zbmbuilddir"/zbm-builder.sh https://raw.githubusercontent.com/zbm-dev/zfsbootmenu/master/zbm-builder.sh
+		chmod 755 "\$zbmbuilddir"/zbm-builder.sh
+		chmod +x "\$zbmbuilddir"/zbm-builder.sh
+
+		apt-get install -y podman
+
+		cd "\$zbmbuilddir"
+		/bin/bash "\$zbmbuilddir"/remote-ssh-build.sh
+	EOH
+
+	##Test for live environment.
+	if grep casper /proc/cmdline >/dev/null 2>&1;
+	then
+		echo "Live environment present. Reboot into new installation to install remoteaccess."
+		exit 1
+	else
+		if [ -f /home/"$user"/.ssh/authorized_keys ];
+		then true
+		else
+			mkdir -p /home/"$user"/.ssh
+			chown "$user":"$user" /home/"$user"/.ssh
+			touch /home/"$user"/.ssh/authorized_keys
+			chmod 644 /home/"$user"/.ssh/authorized_keys
+			chown "$user":"$user" /home/"$user"/.ssh/authorized_keys
+		fi
+
+		/bin/bash /tmp/remote_zbm_access.sh
+
+		echo "Zfsbootmenu remote access installed. Connect as root on port 222 during boot: \"ssh root@{IP_ADDRESS or FQDN of zfsbootmenu} -p 222\""
+		echo "Your SSH public key must be placed in \"/home/$user/.ssh/authorized_keys\" prior to reboot or remote access will not work."
+		echo "You can add your remote user key using the following command from the remote user's terminal if openssh-server is active on the host."
+		echo "\"ssh-copy-id -i $user@{IP_ADDRESS or FQDN of the server}\""
+		echo "Run the following command after copying across the remote user's public ssh key into the authorized_keys file."
+		echo "/bin/bash /etc/zfsbootmenu/remote-ssh-build.sh"
+	fi
+
 }
 
 systemsetupFunc_part1(){
@@ -1571,7 +1746,8 @@ systemsetupFunc_part4(){
 			fi
 	EOCHROOT
 
-	zfsbootmenu_install_config_Func "chroot"
+	#zfsbootmenu_install_config_Func "chroot"
+	zfsbootmenu_install_config_container_Func
 
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		##Update refind_linux.conf
@@ -1681,12 +1857,6 @@ systemsetupFunc_part4(){
 		;;
 	esac
 
-	if [ "${remoteaccess_first_boot}" = "yes" ];
-	then
-		remote_zbm_access_Func "chroot"
-	else true
-	fi
-	
 }
 
 systemsetupFunc_part5(){
@@ -2206,12 +2376,14 @@ unmount_datasets(){
 }
 
 setupremoteaccess(){
-	if [ -f /etc/zfsbootmenu/dracut.conf.d/dropbear.conf ];
+	#if [ -f /etc/zfsbootmenu/dracut.conf.d/dropbear.conf ];
+	if [ -d /etc/zfsbootmenu/dropbear ];
 	then echo "Remote access already appears to be installed owing to the presence of /etc/zfsbootmenu/dracut.conf.d/dropbear.conf. Install cancelled."
 	else 
 		disclaimer
 		update_date_time
-		remote_zbm_access_Func "base"
+		#remote_zbm_access_Func "base"
+		remote_zbm_access_container_Func
 	fi
 }
 
