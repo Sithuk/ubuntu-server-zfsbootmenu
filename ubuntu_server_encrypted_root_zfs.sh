@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2026-04-19
+##Script date: 2026-04-23
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -1484,6 +1484,27 @@ remote_zbm_access_container_Func(){
 		}
 		setup_network
 
+		add_welcome_message(){
+			mkdir -p "\$zbmbuilddir"/rc.d
+
+			cat > "\$zbmbuilddir"/rc.d/20-dropbear-banner.sh <<-EOT
+				#!/bin/sh
+				cat > /etc/dropbear-banner.txt <<-EOF
+					=======================================
+					ZFSBootMenu Remote Access Environment
+					=======================================
+					Welcome to the ZFSBootMenu initramfs shell. Enter "zfsbootmenu" or "zbm" to start ZFSBootMenu.
+				EOF
+				sed -i '/dropbear .* -P \/tmp\/dropbear.pid/ s/$/ -b \/etc\/dropbear-banner.txt/' /usr/lib/dracut/modules.d/60crypt-ssh/dropbear-start.sh
+			EOT
+			chmod +x "\$zbmbuilddir"/rc.d/20-dropbear-banner.sh
+
+			cat > "\$zbmbuilddir"/dracut.conf.d/20-dropbear-banner.conf<<-EOP
+					install_items+=" /etc/dropbear-banner.txt "
+			EOP
+		}
+		add_welcome_message
+
 		curl -L -o "\$zbmbuilddir"/remote-ssh-build.sh https://raw.githubusercontent.com/zbm-dev/zfsbootmenu/refs/heads/master/contrib/remote-ssh-build.sh
 		chmod +x "\$zbmbuilddir"/remote-ssh-build.sh
 
@@ -2378,7 +2399,7 @@ unmount_datasets(){
 setupremoteaccess(){
 	#if [ -f /etc/zfsbootmenu/dracut.conf.d/dropbear.conf ];
 	if [ -d /etc/zfsbootmenu/dropbear ];
-	then echo "Remote access already appears to be installed owing to the presence of /etc/zfsbootmenu/dracut.conf.d/dropbear.conf. Install cancelled."
+	then echo "Remote access already appears to be installed owing to the presence of /etc/zfsbootmenu/dropbear. Install cancelled."
 	else 
 		disclaimer
 		update_date_time
