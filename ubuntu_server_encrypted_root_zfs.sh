@@ -1499,6 +1499,7 @@ remote_zbm_access_container_Func(){
 			EOT
 			chmod +x "\$zbmbuilddir"/rc.d/20-dropbear-banner.sh
 
+			mkdir -p "\$zbmbuilddir"/dracut.conf.d
 			cat > "\$zbmbuilddir"/dracut.conf.d/20-dropbear-banner.conf<<-EOP
 					install_items+=" /etc/dropbear-banner.txt "
 			EOP
