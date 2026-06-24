@@ -1,7 +1,7 @@
 #!/bin/bash
 ##Script installs ubuntu on the zfs file system with snapshot rollback at boot. Options include encryption and headless remote unlocking.
 ##Script: https://github.com/Sithuk/ubuntu-server-zfsbootmenu
-##Script date: 2026-05-03
+##Script date: 2026-06-24
 
 # shellcheck disable=SC2317  # Don't warn about unreachable commands in this file
 
@@ -1989,8 +1989,22 @@ extra_programs(){
 		##install openssh-server
 		apt install -y openssh-server
 
-		apt install --yes man-db tldr locate
-			
+		apt install --yes man-db locate
+
+		##install tldr
+		##https://github.com/tealdeer-rs/tealdeer
+		apt install --yes tealdeer ##rust implementation of tldr
+		##setup config file to autoupdate the local offline tldr pages
+		##https://tealdeer-rs.github.io/tealdeer/config_updates.html
+		mkdir -p /home/$user/.config/tealdeer
+		if [ ! -f /home/$user/.config/tealdeer/config.toml ];
+		then
+			cat > /home/$user/.config/tealdeer/config.toml <<-EOF
+				[updates]
+				auto_update = true
+			EOF
+		else true
+		fi
 	;;
 	no)
 		true
