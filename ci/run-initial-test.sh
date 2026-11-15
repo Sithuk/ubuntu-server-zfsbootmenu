@@ -35,6 +35,10 @@ echo "=== Generating env file ==="
 ssh-keygen -q -t ed25519 -N "" -C "ci-admin" -f "$work/admin_key"
 CI_ADMIN_PUBKEY_FILE="$work/admin_key.pub" "$here/gen-env.sh" "$profile" "$work/${script_name%.sh}.env"
 
+echo "=== Config in use (profile ${profile##*/}; passwords redacted) ==="
+sed -E 's/^([A-Za-z_]*(PASSWORD|password)[A-Za-z_]*=).*/\1<redacted>/' "$work/${script_name%.sh}.env"
+echo "=== End config ==="
+
 ##One virtio disk per root-pool id; the id is "virtio-<serial>".
 mapfile -t root_ids < <(
 	# shellcheck source=/dev/null
