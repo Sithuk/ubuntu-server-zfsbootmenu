@@ -52,7 +52,8 @@ def main():
     tee = Tee(args.log)
     deadline = time.monotonic() + args.total_timeout
     child = pexpect.spawn(qemu[0], qemu[1:], encoding="utf-8", codec_errors="replace",
-                          timeout=15, dimensions=(50, 200), logfile_read=tee)
+                          timeout=15, dimensions=(50, 200))
+    child.logfile_read = tee
 
     def die(msg):
         tail = (child.before or "")[-1500:] if isinstance(child.before, str) else ""
