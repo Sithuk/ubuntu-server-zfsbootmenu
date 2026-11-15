@@ -1,0 +1,66 @@
+name: initial-install
+
+##Boots a Debian Live ISO under QEMU/KVM, runs "initial" against virtual disks, and checks the
+##files, datasets and pool export it leaves behind. Slow (roughly 15-30 min), so it runs on
+##demand, nightly (to catch upstream changes: Debian, zfs, zfsbootmenu), and on changes to the
+##script or harness -- not on every push. See ci/README.md.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+  pull_request:
+    paths:
+      - debian_server_encrypted_root_zfs.sh
+      - ci/**
+      - .github/workflows/initial-install.yml
+
+permissions:
+  contents: read
+
+jobs:
+  initial:
+    name: initial (${{ matrix.profile }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [simple]   # one entry per file in ci/profiles/
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU and tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 qemu-utils ovmf p7zip-full e2fsprogs python3-pexpect
+
+      - name: Allow KVM for this user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Month stamp for ISO cache
+        id: month
+        run: echo "month=$(date +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Debian Live ISO
+        uses: actions/cache@v4
+        with:
+          path: ci-work/cache
+          key: debian-live-iso-${{ steps.month.outputs.month }}
+
+      - name: Run initial install test
+        run: ci/run-initial-test.sh "${{ matrix.profile }}"
+
+      - name: Upload serial log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: serial-log-${{ matrix.profile }}
+          path: ci-work/${{ matrix.profile }}/serial.log
+          if-no-files-found: ignore
+          retention-days: 14
