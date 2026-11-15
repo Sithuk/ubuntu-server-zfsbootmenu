@@ -10,7 +10,7 @@ What is checked (`guest-verify.sh`, run in the guest straight after `initial`):
 - `rpool` is exported, nothing is mounted under `$mountpoint`, and `zpool import` lists it (if `initial` could not export it, that is only a warning and the pool is verified in place)
 - it re-imports **without `-f`** and (if encrypted) unlocks with the generated passphrase
 - dataset layout and properties, `bootfs`, compression, ashift
-- files in the new root (sanoid, apt snapshot hook, networkd, zbm config, initramfs key hook,
+- files in the new root (networkd, zbm config, initramfs key hook,
   user/ssh files, the copied script and `.env`, install log) and their modes
 - the EFI partition: type, label, rEFInd, `refind_linux.conf`, the zfsbootmenu image, NVRAM entry
 - the pool exports cleanly again afterwards

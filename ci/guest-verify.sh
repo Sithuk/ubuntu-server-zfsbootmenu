@@ -98,7 +98,11 @@ case "$bootfs" in
 	*) fail "bootfs set to ${RPOOL}/ROOT/debian.* (is '${bootfs}')" ;;
 esac
 check "root dataset canmount=noauto" test "$(zfs get -H -o value canmount "$bootfs")" = "noauto"
-check "root dataset mountpoint=/" test "$(zfs get -H -o value mountpoint "$bootfs")" = "/"
+##With an altroot the property reads back prefixed (e.g. /mnt/deb_server), so accept both.
+case "$(zfs get -H -o value mountpoint "$bootfs")" in
+	"/"|"$mountpoint") pass "root dataset mountpoint=/" ;;
+	*) fail "root dataset mountpoint=/ (is '$(zfs get -H -o value mountpoint "$bootfs")')" ;;
+esac
 check "org.zfsbootmenu:commandline set on ${RPOOL}/ROOT" \
 	test "$(zfs get -H -o value org.zfsbootmenu:commandline "${RPOOL}/ROOT")" != "-"
 
@@ -122,11 +126,7 @@ file_in /etc/fstab
 contains /etc/fstab "swap"
 file_in /etc/crypttab
 
-file_in /etc/sanoid/sanoid.conf
-file_in /etc/apt/apt.conf.d/80-zfs-snapshot
-exec_in /usr/local/bin/apt-snapshot-prune.sh
-file_in /etc/systemd/system/apt-snapshot-prune.service
-file_in /etc/systemd/system/apt-snapshot-prune.timer
+##sanoid and the apt snapshot hook are installed by "postreboot", not "initial", so aren't checked here.
 check "a systemd-networkd .network file exists" \
 	sh -c "ls '${verify_root}'/etc/systemd/network/10-*.network"
 
@@ -142,8 +142,9 @@ file_in /etc/zfsbootmenu/zbm-builder.conf
 
 for f in "debian_server_encrypted_root_zfs.sh" "debian_server_encrypted_root_zfs.env"; do
 	file_in "/home/${user}/${f}"
+	##Compare numeric ids: stat's name lookup would use the live system's passwd, not the new one's.
 	check "owned by ${user}: /home/${user}/${f}" \
-		test "$(stat -c %U "${verify_root}/home/${user}/${f}" 2>/dev/null)" = "$user"
+		test "$(stat -c %u "${verify_root}/home/${user}/${f}" 2>/dev/null)" = "$(awk -F: -v u="$user" '$1==u{print $3}' "${verify_root}/etc/passwd")"
 done
 exec_in "/home/${user}/debian_server_encrypted_root_zfs.sh"
 mode_is "/home/${user}/debian_server_encrypted_root_zfs.env" 600
