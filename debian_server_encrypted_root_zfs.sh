@@ -2382,7 +2382,8 @@ systemsetupFunc_part4(){
 				else
 					device_name="$(readlink -f /dev/disk/by-id/"${diskidnum}")"
 
-					existing_backup_hexes="$(efibootmgr | grep -w "rEFInd Boot Manager Backup $i" | cut -d " " -f 1 | sed 's,Boot,,' | sed 's,*,,')"
+					##No match is the normal case here; grep exiting 1 would otherwise abort under set -eo pipefail.
+					existing_backup_hexes="$(efibootmgr | grep -w "rEFInd Boot Manager Backup $i" | cut -d " " -f 1 | sed 's,Boot,,' | sed 's,*,,' || true)"
 					if [ -n "$existing_backup_hexes" ]; then
 						printf '%s\n' "$existing_backup_hexes" | while read -r existing_hex;
 						do
@@ -2398,7 +2399,8 @@ systemsetupFunc_part4(){
 				echo "$i" > "$loop_counter"
 			done < /tmp/diskid_check_root.txt
 
-			stale_esp_hexes="$(efibootmgr | grep -v "Backup" | grep -w "rEFInd Boot Manager" | cut -d " " -f 1 | sed 's,Boot,,' | sed 's,*,,')"
+			##No match is the normal case here; grep exiting 1 would otherwise abort under set -eo pipefail.
+			stale_esp_hexes="$(efibootmgr | grep -v "Backup" | grep -w "rEFInd Boot Manager" | cut -d " " -f 1 | sed 's,Boot,,' | sed 's,*,,' || true)"
 			if [ -n "$stale_esp_hexes" ]; then
 				printf '%s\n' "$stale_esp_hexes" | while read -r stale_hex;
 				do
